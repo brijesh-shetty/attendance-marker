@@ -8,13 +8,11 @@ class AppController {
     this.selectedSyllabusTest = "Test 1";
     this.editingStudentId = null;
 
-    // Cache DOM Elements
     this.views = {
       dashboard: document.getElementById("dashboard-view"),
       students: document.getElementById("students-view"),
       attendance: document.getElementById("attendance-view"),
-      tests: document.getElementById("tests-view"),
-      syllabus: document.getElementById("syllabus-view")
+      tests: document.getElementById("tests-view")
     };
 
     this.navItems = document.querySelectorAll(".bottom-nav .nav-item");
