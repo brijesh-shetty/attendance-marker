@@ -1,0 +1,149 @@
+.only-print {
+  display: none !important;
+}
+
+@media print {
+  .only-print {
+    display: block !important;
+  }
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+    font-size: 12pt !important;
+    margin: 0 !important;
+    padding: 20px !important;
+  }
+
+  #app-container {
+    max-width: 100% !important;
+    box-shadow: none !important;
+    padding-bottom: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide navigation, buttons, controls and header icons */
+  .bottom-nav,
+  .settings-btn,
+  .app-header button,
+  .btn,
+  .input-group,
+  .view-selector,
+  .no-print,
+  #toast-container,
+  .modal {
+    display: none !important;
+  }
+
+  /* Show only the active section container and make it full screen width */
+  .view-container {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .view-section {
+    display: none !important;
+  }
+
+  .view-section.active {
+    display: block !important;
+  }
+
+  /* Print specific report layout styles */
+  .print-header {
+    text-align: center;
+    margin-bottom: 30px;
+    border-bottom: 2px solid #000000;
+    padding-bottom: 15px;
+  }
+
+  .print-header h1 {
+    font-size: 24pt !important;
+    color: #000000 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.1em !important;
+    margin-bottom: 5px !important;
+    background: none !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  .print-header h2 {
+    font-size: 14pt !important;
+    color: #444444 !important;
+    font-weight: 500 !important;
+    margin-top: 5px;
+  }
+
+  .print-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    font-size: 11pt;
+    font-weight: bold;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 8px;
+  }
+
+  /* Tables layout for reports */
+  .print-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-top: 15px !important;
+    margin-bottom: 20px !important;
+  }
+
+  .print-table th, 
+  .print-table td {
+    border: 1px solid #000000 !important;
+    padding: 8px 12px !important;
+    text-align: left !important;
+    font-size: 10pt !important;
+    color: #000000 !important;
+  }
+
+  .print-table th {
+    background-color: #f2f2f2 !important;
+    font-weight: bold !important;
+  }
+
+  .print-table tr:nth-child(even) {
+    background-color: #fafafa !important;
+  }
+
+  /* Highlight columns/cells */
+  .text-center {
+    text-align: center !important;
+  }
+
+  .text-danger {
+    color: #ef4444 !important;
+    font-weight: bold !important;
+  }
+  
+  .print-summary {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 11pt;
+  }
+
+  .print-summary p {
+    margin: 5px 0;
+  }
+
+  .signature-area {
+    margin-top: 60px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .signature-line {
+    width: 200px;
+    border-top: 1px solid #000000;
+    text-align: center;
+    padding-top: 5px;
+    font-size: 10pt;
+  }
+}

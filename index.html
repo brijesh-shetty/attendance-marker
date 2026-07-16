@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>GALAXY ACADEMY - Admin Portal</title>
+  
+  <!-- CSS Stylesheets -->
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/print.css">
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Google Fonts - Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#8b5cf6">
+  
+  <!-- Firebase JS SDK Config Mapping -->
+  <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div id="app-container">
+    
+    <!-- Top Header -->
+    <header class="app-header no-print">
+      <div class="brand">
+        <i data-lucide="graduation-cap" style="color: var(--primary);"></i>
+        <h1>Galaxy Academy</h1>
+      </div>
+      <button class="settings-btn" id="open-settings-btn" title="Settings">
+        <i data-lucide="settings"></i>
+      </button>
+    </header>
+
+    <!-- Main View Contents -->
+    <main class="view-container">
+      
+      <!-- 1. DASHBOARD VIEW -->
+      <section id="dashboard-view" class="view-section active">
+        <div class="card">
+          <h2 style="font-size: 1.25rem; margin-bottom: 8px;">Welcome Admin</h2>
+          <p style="color: var(--text-muted); font-size: 0.85rem;">Manage attendance, tests, and syllabus updates for Galaxy Academy students.</p>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-num" id="stat-total-students">0</div>
+            <div class="stat-label">Students</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="stat-attendance-today">0%</div>
+            <div class="stat-label">Attendance Today</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Today's Absentees</span>
+            <i data-lucide="alert-circle" style="color: var(--danger); width: 18px; height: 18px;"></i>
+          </div>
+          <div id="dashboard-absentees-list" style="font-size: 0.9rem;">
+            <!-- Rendered by JS -->
+            <p style="color: var(--text-muted); font-style: italic;">No absentees reported today.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Quick Actions</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <button class="btn btn-primary btn-full" onclick="app.switchView('attendance')">
+              <i data-lucide="check-square"></i> Mark Attendance
+            </button>
+            <button class="btn btn-secondary btn-full" onclick="app.switchView('tests')">
+              <i data-lucide="clipboard-list"></i> Enter Test Marks
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. STUDENTS VIEW -->
+      <section id="students-view" class="view-section">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h2>Student List</h2>
+          <button class="btn btn-primary" id="add-student-trigger-btn">
+            <i data-lucide="user-plus"></i> Add
+          </button>
+        </div>
+
+        <div class="input-group">
+          <input type="text" id="student-search-input" class="input-field" placeholder="Search student name...">
+        </div>
+
+        <div id="students-list-container">
+          <!-- Rendered by JS -->
+        </div>
+      </section>
+
+      <!-- 3. ATTENDANCE VIEW -->
+      <!-- 3. ATTENDANCE VIEW -->
+      <section id="attendance-view" class="view-section">
+        <h2>Daily Attendance</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Record or edit daily student attendance.</p>
+
+        <!-- A. Date Selection & Setup View -->
+        <div id="attendance-setup-panel">
+          <div class="card">
+            <div class="input-group">
+              <label for="attendance-date-input">Select Attendance Date</label>
+              <input type="date" id="attendance-date-input" class="input-field">
+            </div>
+            <button class="btn btn-primary btn-full" id="attendance-start-btn">
+              <i data-lucide="play"></i> Take / Edit Attendance
+            </button>
+          </div>
+
+          <!-- Printable preview is visible in setup panel once saved or if attendance already exists for selected date -->
+          <div id="attendance-print-report" class="card" style="margin-top: 16px; display: none;">
+            <div class="card-title">
+              <span>Attendance Report Summary</span>
+            </div>
+            <div id="attendance-report-details" style="font-size: 0.9rem; margin-bottom: 14px;">
+              <!-- Rendered by JS -->
+            </div>
+            <button class="btn btn-secondary btn-full" id="download-absentees-btn" style="width: 100%;">
+              <i data-lucide="download"></i> Download Absentees List (.txt)
+            </button>
+          </div>
+        </div>
+
+        <!-- B. Attendance Sheet Entry View -->
+        <div id="attendance-sheet-panel" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <span id="attendance-active-date-label" style="font-weight: 600; color: var(--primary-hover);">Date: YYYY-MM-DD</span>
+            <button class="btn btn-secondary" id="mark-all-present-btn" style="padding: 6px 12px; font-size: 0.85rem;">All Present</button>
+          </div>
+          
+          <div class="card" id="attendance-list-card">
+            <div id="attendance-list-container">
+              <!-- Rendered by JS -->
+            </div>
+            <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
+              <button class="btn btn-primary btn-full" id="save-attendance-btn">Save & Exit</button>
+              <button class="btn btn-secondary btn-full" id="cancel-attendance-btn">Cancel & Exit</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. TESTS VIEW -->
+      <section id="tests-view" class="view-section">
+        <h2>Test Series Portal</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Grade student test performances from Test 1 to 10.</p>
+
+        <!-- A. Selection & Setup View -->
+        <div id="test-setup-panel">
+          <div class="card" style="margin-bottom: 16px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+              <div class="input-group" style="margin-bottom: 0;">
+                <label for="test-select">Test Series</label>
+                <select id="test-select" class="select-field">
+                  <option value="Test 1">Test 1</option>
+                  <option value="Test 2">Test 2</option>
+                  <option value="Test 3">Test 3</option>
+                  <option value="Test 4">Test 4</option>
+                  <option value="Test 5">Test 5</option>
+                  <option value="Test 6">Test 6</option>
+                  <option value="Test 7">Test 7</option>
+                  <option value="Test 8">Test 8</option>
+                  <option value="Test 9">Test 9</option>
+                  <option value="Test 10">Test 10</option>
+                </select>
+              </div>
+              <div class="input-group" style="margin-bottom: 0;">
+                <label for="subject-select">Subject</label>
+                <select id="subject-select" class="select-field">
+                  <option value="Maths">Maths</option>
+                  <option value="Physics">Physics</option>
+                  <option value="Chemistry">Chemistry</option>
+                  <option value="Bio">Biology</option>
+                  <option value="CS">Computer Science</option>
+                </select>
+              </div>
+            </div>
+            
+            <div class="input-group">
+              <label for="test-syllabus-input">Syllabus Details for Selected Test & Subject</label>
+              <textarea id="test-syllabus-input" class="textarea-field" rows="3" placeholder="Enter syllabus details (e.g. Algebra, Electrostatics)..."></textarea>
+            </div>
+            
+            <button class="btn btn-primary btn-full" id="test-start-btn">
+              <i data-lucide="edit"></i> Enter / Edit Marks
+            </button>
+          </div>
+        </div>
+
+        <!-- B. Marks Entry View -->
+        <div id="test-sheet-panel" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <span id="test-active-label" style="font-weight: 600; color: var(--primary-hover);">Test: Test 1 | Subject: Maths</span>
+          </div>
+
+          <div class="card" id="test-syllabus-info-card" style="display: none; border-left: 4px solid var(--primary); margin-bottom: 16px;">
+            <div style="font-size: 0.85rem;">
+              <strong style="color: var(--primary-hover);">Test Syllabus:</strong>
+              <span id="test-syllabus-preview-text" style="color: var(--text-muted);">Not filled yet.</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>Marks Entry Form</span>
+              <span id="test-average-badge" style="font-size: 0.8rem; background-color: var(--border-color); padding: 2px 8px; border-radius: 12px; display: none;"></span>
+            </div>
+            <div id="test-students-list">
+              <!-- Rendered by JS -->
+            </div>
+            <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
+              <div style="display: flex; gap: 8px; width: 100%;">
+                <button class="btn btn-secondary" id="print-test-sheet-btn" style="flex: 1;">
+                  <i data-lucide="printer"></i> Print Sheet
+                </button>
+                <button class="btn btn-primary" id="save-test-marks-btn" style="flex: 2;">
+                  Save & Exit
+                </button>
+              </div>
+              <button class="btn btn-secondary btn-full" id="cancel-test-marks-btn">Cancel & Exit</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+    </main>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="bottom-nav no-print">
+      <div class="nav-item active" data-view="dashboard">
+        <i data-lucide="home"></i>
+        <span>Home</span>
+      </div>
+      <div class="nav-item" data-view="students">
+        <i data-lucide="users"></i>
+        <span>Students</span>
+      </div>
+      <div class="nav-item" data-view="attendance">
+        <i data-lucide="calendar"></i>
+        <span>Attendance</span>
+      </div>
+      <div class="nav-item" data-view="tests">
+        <i data-lucide="file-text"></i>
+        <span>Tests</span>
+      </div>
+
+    </nav>
+
+    <!-- Modals Layer -->
+
+    <!-- Add/Edit Student Modal -->
+    <div class="modal" id="student-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="student-modal-title">Add Student</h3>
+          <span class="modal-close" id="student-modal-close"><i data-lucide="x"></i></span>
+        </div>
+        <form id="student-form">
+          <input type="hidden" id="student-id-field">
+          <div class="input-group">
+            <label for="student-name-field">Student Name *</label>
+            <input type="text" id="student-name-field" class="input-field" required placeholder="e.g. Rahul Kumar">
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="input-group">
+              <label for="student-combination-field">Combination</label>
+              <select id="student-combination-field" class="select-field">
+                <option value="">Select Comb</option>
+                <option value="CS">CS (Comp Sci)</option>
+                <option value="BIO">BIO (Biology)</option>
+                <option value="ELE">ELE (Electronics)</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label for="student-college-field">College</label>
+              <input type="text" id="student-college-field" class="input-field" placeholder="e.g. JNC">
+            </div>
+          </div>
+          <div class="input-group">
+            <label for="student-phone-field">Parent Contact Phone 1</label>
+            <input type="tel" id="student-phone-field" class="input-field" placeholder="e.g. 9876543210">
+          </div>
+          <div class="input-group">
+            <label for="parent-phone-field">Parent Contact Phone 2</label>
+            <input type="tel" id="parent-phone-field" class="input-field" placeholder="e.g. 9876543211">
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <button type="button" class="btn btn-secondary" style="flex: 1;" id="student-modal-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary" style="flex: 1;" id="student-modal-submit">Save Student</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- View Student Details Modal -->
+    <div class="modal" id="student-details-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Student Profile</h3>
+          <span class="modal-close" id="student-details-modal-close"><i data-lucide="x"></i></span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 10px;">
+          <div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 2px;">Name</div>
+            <div id="detail-student-name" style="font-size: 1.15rem; font-weight: 600; color: var(--text-main);"></div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 2px;">Combination</div>
+              <div id="detail-student-combination" style="font-size: 1rem; font-weight: 500; color: var(--text-main);"></div>
+            </div>
+            <div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 2px;">College</div>
+              <div id="detail-student-college" style="font-size: 1rem; font-weight: 500; color: var(--text-main);"></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 2px;">Parent Contact Phone 1</div>
+            <div id="detail-parent-phone-1" style="font-size: 1rem; font-weight: 500; color: var(--text-main);"></div>
+          </div>
+          <div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 2px;">Parent Contact Phone 2</div>
+            <div id="detail-parent-phone-2" style="font-size: 1rem; font-weight: 500; color: var(--text-main);"></div>
+          </div>
+          
+          <div style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 10px; display: flex; gap: 10px;">
+            <button class="btn btn-secondary" id="detail-edit-btn" style="flex: 1;">
+              <i data-lucide="edit-2"></i> Edit
+            </button>
+            <button class="btn btn-danger" id="detail-delete-btn" style="flex: 1;">
+              <i data-lucide="trash-2"></i> Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings / Firebase Config Modal -->
+    <div class="modal" id="settings-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Portal Settings</h3>
+          <span class="modal-close" id="settings-modal-close"><i data-lucide="x"></i></span>
+        </div>
+        
+        <div class="input-group">
+          <label for="db-mode-select">Database Mode</label>
+          <select id="db-mode-select" class="select-field">
+            <option value="local">Local Offline Storage</option>
+            <option value="firebase">Firebase Cloud Sync</option>
+          </select>
+        </div>
+
+        <!-- Firebase inputs (Shown only in firebase mode) -->
+        <div id="firebase-config-fields" style="display: none; border-top: 1px solid var(--border-color); padding-top: 14px;">
+          <h4 style="margin-bottom: 12px; font-size: 0.9rem; color: var(--primary-hover);">Firebase Credentials</h4>
+          
+          <div class="input-group">
+            <label for="fb-api-key">API Key</label>
+            <input type="password" id="fb-api-key" class="input-field" placeholder="AIzaSy...">
+          </div>
+          <div class="input-group">
+            <label for="fb-auth-domain">Auth Domain</label>
+            <input type="text" id="fb-auth-domain" class="input-field" placeholder="galaxy-academy.firebaseapp.com">
+          </div>
+          <div class="input-group">
+            <label for="fb-project-id">Project ID</label>
+            <input type="text" id="fb-project-id" class="input-field" placeholder="galaxy-academy">
+          </div>
+          <div class="input-group">
+            <label for="fb-app-id">App ID</label>
+            <input type="text" id="fb-app-id" class="input-field" placeholder="1:123456789:web:abcd...">
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 14px;">
+          <h4 style="margin-bottom: 8px; font-size: 0.9rem;">Backup & Recovery</h4>
+          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <button class="btn btn-secondary" style="flex: 1; padding: 8px;" id="export-backup-btn">Export Data</button>
+            <button class="btn btn-secondary" style="flex: 1; padding: 8px;" id="import-backup-trigger">Import Data</button>
+          </div>
+          <button class="btn btn-secondary btn-full" style="padding: 8px; width: 100%; border-color: rgba(139, 92, 246, 0.4); color: var(--primary-hover);" id="seed-sheet-data-btn">
+            <i data-lucide="database-backup"></i> Reset & Load Student Sheet
+          </button>
+          <input type="file" id="import-backup-file" style="display: none;" accept=".json">
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 24px;">
+          <button class="btn btn-secondary btn-full" id="settings-cancel-btn">Cancel</button>
+          <button class="btn btn-primary btn-full" id="settings-save-btn">Apply Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications Root -->
+    <div id="toast-container"></div>
+
+  </div>
+
+  <!-- Print Layout Sheets (only display on window.print()) -->
+  <div class="only-print">
+    <!-- Marks lists and daily reports render here dynamically before triggers -->
+    <div id="print-sheet-root"></div>
+  </div>
+
+  <!-- Main scripts -->
+  <script type="module" src="js/db.js"></script>
+  <script type="module" src="js/app.js"></script>
+
+</body>
+</html>

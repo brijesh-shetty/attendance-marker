@@ -1,0 +1,24 @@
+{
+  "name": "Galaxy Academy Admin Portal",
+  "short_name": "Galaxy Academy",
+  "description": "Daily attendance manager, test series grading, and syllabus planner app for Pre-University students.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#8b5cf6",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

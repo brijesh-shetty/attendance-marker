@@ -1,0 +1,42 @@
+:root {
+  /* Colors */
+  --bg-dark: #090d16;
+  --bg-card: #151b26;
+  --bg-card-hover: #1e2636;
+  --border-color: rgba(255, 255, 255, 0.08);
+  
+  --primary: #8b5cf6;
+  --primary-hover: #a78bfa;
+  --primary-glow: rgba(139, 92, 246, 0.35);
+  
+  --success: #10b981;
+  --success-glow: rgba(16, 185, 129, 0.2);
+  --danger: #ef4444;
+  --danger-glow: rgba(239, 68, 68, 0.2);
+  
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+  --text-inverse: #090d16;
+  
+  /* Fonts */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  
+  /* Layout constraints */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  
+  --transition-fast: 0.2s ease;
+  --transition-normal: 0.3s ease;
+}
+
+@media print {
+  :root {
+    --bg-dark: #ffffff;
+    --bg-card: #ffffff;
+    --border-color: #000000;
+    --text-main: #000000;
+    --text-muted: #555555;
+    --primary: #000000;
+  }
+}
