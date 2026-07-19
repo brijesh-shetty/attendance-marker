@@ -36,6 +36,24 @@
 </head>
 <body>
 
+  <!-- Fullscreen Login Overlay -->
+  <div id="login-overlay" class="login-overlay">
+    <div class="login-card">
+      <div class="brand" style="margin-bottom: 20px; justify-content: center;">
+        <i data-lucide="graduation-cap" style="color: var(--primary); width: 32px; height: 32px;"></i>
+        <h1 style="font-size: 1.6rem; font-weight: 800;">Galaxy Academy</h1>
+      </div>
+      <h2 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; text-align: center; color: var(--text-main);">Admin Login</h2>
+      <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; margin-bottom: 20px;">Please enter the passcode to access the portal.</p>
+      <form id="login-form">
+        <div class="input-group">
+          <input type="password" id="login-passcode" class="input-field" placeholder="Enter Passcode" required style="text-align: center; font-size: 1.1rem; letter-spacing: 2px;">
+        </div>
+        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 10px; font-weight: 700;">Login</button>
+      </form>
+    </div>
+  </div>
+
   <div id="app-container">
     
     <!-- Top Header -->
@@ -44,9 +62,14 @@
         <i data-lucide="graduation-cap" style="color: var(--primary);"></i>
         <h1>Galaxy Academy</h1>
       </div>
-      <button class="settings-btn" id="open-settings-btn" title="Settings">
-        <i data-lucide="settings"></i>
-      </button>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="settings-btn" id="lock-portal-btn" title="Logout & Lock Portal">
+          <i data-lucide="log-out"></i>
+        </button>
+        <button class="settings-btn" id="open-settings-btn" title="Settings">
+          <i data-lucide="settings"></i>
+        </button>
+      </div>
     </header>
 
     <!-- Main View Contents -->
@@ -175,19 +198,24 @@
           <div class="card" style="margin-bottom: 16px;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
               <div class="input-group" style="margin-bottom: 0;">
-                <label for="test-select">Test Series</label>
-                <select id="test-select" class="select-field">
-                  <option value="Test 1">Test 1</option>
-                  <option value="Test 2">Test 2</option>
-                  <option value="Test 3">Test 3</option>
-                  <option value="Test 4">Test 4</option>
-                  <option value="Test 5">Test 5</option>
-                  <option value="Test 6">Test 6</option>
-                  <option value="Test 7">Test 7</option>
-                  <option value="Test 8">Test 8</option>
-                  <option value="Test 9">Test 9</option>
-                  <option value="Test 10">Test 10</option>
+                <label for="test-type-select">Test Type</label>
+                <select id="test-type-select" class="select-field">
+                  <option value="Test">Test</option>
+                  <option value="Midterm">Midterm</option>
+                  <option value="Final">Final</option>
+                  <option value="Quiz">Quiz</option>
                 </select>
+              </div>
+              <div class="input-group" style="margin-bottom: 0;">
+                <label for="test-num-input">Test Number</label>
+                <input type="text" id="test-num-input" class="input-field" placeholder="e.g. 1" value="1">
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+              <div class="input-group" style="margin-bottom: 0;">
+                <label for="test-date-input">Test Date</label>
+                <input type="date" id="test-date-input" class="input-field">
               </div>
               <div class="input-group" style="margin-bottom: 0;">
                 <label for="subject-select">Subject</label>
@@ -202,13 +230,24 @@
             </div>
             
             <div class="input-group">
-              <label for="test-syllabus-input">Syllabus Details for Selected Test & Subject</label>
+              <label for="test-syllabus-input">Syllabus Details</label>
               <textarea id="test-syllabus-input" class="textarea-field" rows="3" placeholder="Enter syllabus details (e.g. Algebra, Electrostatics)..."></textarea>
             </div>
             
             <button class="btn btn-primary btn-full" id="test-start-btn">
               <i data-lucide="edit"></i> Enter / Edit Marks
             </button>
+          </div>
+
+          <!-- Previous Tests History List -->
+          <div class="card" style="margin-top: 16px;">
+            <div class="card-title">
+              <span>Previous Tests History</span>
+              <i data-lucide="history" style="color: var(--primary-hover); width: 18px; height: 18px;"></i>
+            </div>
+            <div id="previous-tests-container" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
+              <p style="color: var(--text-muted); font-size: 0.85rem; font-style: italic; text-align: center; padding: 12px 0;">No tests recorded yet.</p>
+            </div>
           </div>
         </div>
 
@@ -375,6 +414,11 @@
             <option value="local">Local Offline Storage</option>
             <option value="firebase">Firebase Cloud Sync</option>
           </select>
+        </div>
+
+        <div class="input-group">
+          <label for="settings-passcode-field">Admin Portal Passcode</label>
+          <input type="password" id="settings-passcode-field" class="input-field" placeholder="Default: 1234">
         </div>
 
         <!-- Firebase inputs (Shown only in firebase mode) -->

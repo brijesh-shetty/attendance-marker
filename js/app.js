@@ -26,10 +26,18 @@ class AppController {
     // Set default date picker to today in India Standard Time
     const today = this.getLocalDateString();
     document.getElementById("attendance-date-input").value = today;
+    document.getElementById("test-date-input").value = today;
 
     // Initialize UI Components
     lucide.createIcons();
-    this.switchView("dashboard");
+
+    // Check session login state
+    if (this.isLoggedIn()) {
+      this.hideLoginScreen();
+      this.switchView("dashboard");
+    } else {
+      this.showLoginScreen();
+    }
 
     // Register Service Worker for offline PWA support
     if ('serviceWorker' in navigator) {
@@ -37,6 +45,18 @@ class AppController {
         .then(reg => console.log('PWA Service Worker registered successfully:', reg.scope))
         .catch(err => console.error('PWA Service Worker registration failed:', err));
     }
+  }
+
+  isLoggedIn() {
+    return sessionStorage.getItem("ga_logged_in") === "true";
+  }
+
+  showLoginScreen() {
+    document.getElementById("login-overlay").style.display = "flex";
+  }
+
+  hideLoginScreen() {
+    document.getElementById("login-overlay").style.display = "none";
   }
 
   // Get current date string in YYYY-MM-DD format
@@ -98,7 +118,11 @@ class AppController {
       case "tests":
         document.getElementById("test-setup-panel").style.display = "block";
         document.getElementById("test-sheet-panel").style.display = "none";
+        if (!document.getElementById("test-date-input").value) {
+          document.getElementById("test-date-input").value = this.getLocalDateString();
+        }
         await this.loadTestSyllabus();
+        await this.loadPreviousTests();
         break;
     }
     lucide.createIcons();
@@ -502,7 +526,9 @@ class AppController {
      TEST SERIES PORTAL
      ========================================================================= */
   async loadTestList() {
-    this.selectedTest = document.getElementById("test-select").value;
+    const type = document.getElementById("test-type-select").value;
+    const num = document.getElementById("test-num-input").value.trim();
+    this.selectedTest = `${type} ${num}`;
     this.selectedSubject = document.getElementById("subject-select").value;
 
     const students = await db.getStudents();
@@ -624,13 +650,25 @@ class AppController {
       };
     });
 
-    await db.saveTestMarks(this.selectedTest, this.selectedSubject, results);
+    const type = document.getElementById("test-type-select").value;
+    const num = document.getElementById("test-num-input").value.trim();
+    const date = document.getElementById("test-date-input").value;
+    const meta = {
+      testType: type,
+      testNumber: num,
+      date: date
+    };
+
+    await db.saveTestMarks(this.selectedTest, this.selectedSubject, results, meta);
     this.showToast(`Test marks successfully saved.`);
     this.calculateAverageScoreBadge();
     
     // Go back to setup panel
     document.getElementById("test-setup-panel").style.display = "block";
     document.getElementById("test-sheet-panel").style.display = "none";
+    
+    // Refresh history list
+    this.loadPreviousTests();
   }
 
   async printMarksSheet() {
@@ -728,11 +766,70 @@ class AppController {
      SYLLABUS PLANNER (INTEGRATED INTO TESTS VIEW)
      ========================================================================= */
   async loadTestSyllabus() {
-    const testId = document.getElementById("test-select").value;
+    const type = document.getElementById("test-type-select").value;
+    const num = document.getElementById("test-num-input").value.trim();
+    const testId = `${type} ${num}`;
     const subject = document.getElementById("subject-select").value;
     const syllabus = await db.getSyllabus(testId);
     
     document.getElementById("test-syllabus-input").value = syllabus[subject] || "";
+  }
+
+  async loadPreviousTests() {
+    const container = document.getElementById("previous-tests-container");
+    container.innerHTML = "";
+    
+    const tests = await db.getAllTests();
+    if (tests.length === 0) {
+      container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; font-style: italic; text-align: center; padding: 12px 0;">No tests recorded yet.</p>`;
+      return;
+    }
+    
+    tests.forEach(test => {
+      const div = document.createElement("div");
+      div.className = "history-item";
+      
+      const dateStr = test.date ? new Date(test.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'No Date';
+      
+      div.innerHTML = `
+        <div class="history-meta">
+          <span class="history-title">${test.testId}</span>
+          <span class="history-subtitle">${test.subject} | ${dateStr}</span>
+        </div>
+        <i data-lucide="chevron-right" style="width: 16px; height: 16px; color: var(--text-muted);"></i>
+      `;
+      
+      div.addEventListener("click", async () => {
+        // Parse type and number
+        const match = test.testId.match(/^([a-zA-Z\s]+)\s+(\d+)$/);
+        if (match) {
+          document.getElementById("test-type-select").value = match[1].trim();
+          document.getElementById("test-num-input").value = match[2].trim();
+        } else {
+          document.getElementById("test-type-select").value = "Test";
+          document.getElementById("test-num-input").value = test.testId.replace("Test ", "");
+        }
+        
+        document.getElementById("test-date-input").value = test.date || "";
+        document.getElementById("subject-select").value = test.subject;
+        
+        await this.loadTestSyllabus();
+        
+        // Navigate directly to editing
+        this.selectedTest = test.testId;
+        this.selectedSubject = test.subject;
+        
+        // Show sheet panel
+        document.getElementById("test-active-label").textContent = `Test: ${this.selectedTest} | Subject: ${this.selectedSubject} | Date: ${test.date || 'N/A'}`;
+        document.getElementById("test-setup-panel").style.display = "none";
+        document.getElementById("test-sheet-panel").style.display = "block";
+        this.loadTestList();
+      });
+      
+      container.appendChild(div);
+    });
+    
+    lucide.createIcons();
   }
 
   /* =========================================================================
@@ -741,6 +838,7 @@ class AppController {
   openSettingsModal() {
     const settings = db.getSettings();
     document.getElementById("db-mode-select").value = settings.mode;
+    document.getElementById("settings-passcode-field").value = settings.passcode || "1234";
     document.getElementById("fb-api-key").value = settings.apiKey || "";
     document.getElementById("fb-auth-domain").value = settings.authDomain || "";
     document.getElementById("fb-project-id").value = settings.projectId || "";
@@ -755,12 +853,21 @@ class AppController {
 
   async handleSaveSettings() {
     const mode = document.getElementById("db-mode-select").value;
+    const passcode = document.getElementById("settings-passcode-field").value.trim();
     const apiKey = document.getElementById("fb-api-key").value.trim();
     const authDomain = document.getElementById("fb-auth-domain").value.trim();
     const projectId = document.getElementById("fb-project-id").value.trim();
     const appId = document.getElementById("fb-app-id").value.trim();
 
-    const newSettings = { mode, apiKey, authDomain, projectId, appId };
+    const currentSettings = db.getSettings();
+    const newSettings = { 
+      mode, 
+      passcode: passcode || currentSettings.passcode || "1234",
+      apiKey, 
+      authDomain, 
+      projectId, 
+      appId 
+    };
     
     // Save settings (triggers initFirebase)
     await db.saveSettings(newSettings);
@@ -836,6 +943,28 @@ class AppController {
       });
     });
 
+    // Login Screen Handlers
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const inputVal = document.getElementById("login-passcode").value;
+      const isValid = await db.verifyPasscode(inputVal);
+      if (isValid) {
+        sessionStorage.setItem("ga_logged_in", "true");
+        this.hideLoginScreen();
+        this.switchView("dashboard");
+        document.getElementById("login-passcode").value = "";
+        this.showToast("Login successful. Welcome admin!");
+      } else {
+        this.showToast("Incorrect passcode. Access Denied.", "danger");
+      }
+    });
+
+    document.getElementById("lock-portal-btn").addEventListener("click", () => {
+      sessionStorage.removeItem("ga_logged_in");
+      this.showLoginScreen();
+      this.showToast("Logged out & locked portal successfully.");
+    });
+
     // Settings Modal controls
     document.getElementById("open-settings-btn").addEventListener("click", () => this.openSettingsModal());
     document.getElementById("settings-modal-close").addEventListener("click", () => {
@@ -908,10 +1037,24 @@ class AppController {
     document.getElementById("download-absentees-btn").addEventListener("click", () => this.handleDownloadAbsentees());
 
     // Test Series View Handlers
-    document.getElementById("test-select").addEventListener("change", () => this.loadTestSyllabus());
+    document.getElementById("test-type-select").addEventListener("change", () => this.loadTestSyllabus());
+    document.getElementById("test-num-input").addEventListener("input", () => this.loadTestSyllabus());
     document.getElementById("subject-select").addEventListener("change", () => this.loadTestSyllabus());
     document.getElementById("test-start-btn").addEventListener("click", async () => {
-      this.selectedTest = document.getElementById("test-select").value;
+      const type = document.getElementById("test-type-select").value;
+      const num = document.getElementById("test-num-input").value.trim();
+      if (!num) {
+        this.showToast("Please enter a test number.", "danger");
+        return;
+      }
+      
+      const date = document.getElementById("test-date-input").value;
+      if (!date) {
+        this.showToast("Please select a test date.", "danger");
+        return;
+      }
+
+      this.selectedTest = `${type} ${num}`;
       this.selectedSubject = document.getElementById("subject-select").value;
       
       // Auto-save edited syllabus
@@ -920,7 +1063,7 @@ class AppController {
       savedSyllabus[this.selectedSubject] = syllabusVal;
       await db.saveSyllabus(this.selectedTest, savedSyllabus);
 
-      document.getElementById("test-active-label").textContent = `Test: ${this.selectedTest} | Subject: ${this.selectedSubject}`;
+      document.getElementById("test-active-label").textContent = `Test: ${this.selectedTest} | Subject: ${this.selectedSubject} | Date: ${date}`;
       document.getElementById("test-setup-panel").style.display = "none";
       document.getElementById("test-sheet-panel").style.display = "block";
       this.loadTestList();

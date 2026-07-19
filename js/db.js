@@ -9,6 +9,15 @@ import {
   deleteDoc 
 } from "firebase/firestore";
 
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB2YJOFV6qFzDfuMjL2aGKHgq4Eb_f05Jo",
+  authDomain: "galaxyacademy-5.firebaseapp.com",
+  projectId: "galaxyacademy-5",
+  storageBucket: "galaxyacademy-5.firebasestorage.app",
+  messagingSenderId: "178445479028",
+  appId: "1:178445479028:web:42dbad5f82cd4d3b6af521"
+};
+
 const DEFAULT_STUDENTS = [
   { id: "stu_sheet_1", name: "SHAFFRINA HAIYED", combination: "CS", college: "JNC", phone: "8511683265", parentPhone: "8892471199" },
   { id: "stu_sheet_2", name: "DIVYESH M", combination: "CS", college: "SFS", phone: "9901896887", parentPhone: "8073689169" },
@@ -57,16 +66,25 @@ class DatabaseManager {
 
   // Load configuration from local storage
   getSettings() {
+    const hasDefault = DEFAULT_FIREBASE_CONFIG.apiKey && DEFAULT_FIREBASE_CONFIG.projectId;
     const defaultSettings = {
-      mode: 'local', // 'local' or 'firebase'
-      apiKey: '',
-      authDomain: '',
-      projectId: '',
-      appId: ''
+      mode: hasDefault ? 'firebase' : 'local', // 'local' or 'firebase'
+      apiKey: DEFAULT_FIREBASE_CONFIG.apiKey || '',
+      authDomain: DEFAULT_FIREBASE_CONFIG.authDomain || '',
+      projectId: DEFAULT_FIREBASE_CONFIG.projectId || '',
+      appId: DEFAULT_FIREBASE_CONFIG.appId || '',
+      passcode: '1234'
     };
     try {
       const stored = localStorage.getItem('galaxy_academy_settings');
-      return stored ? JSON.parse(stored) : defaultSettings;
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.passcode === undefined) {
+          parsed.passcode = '1234';
+        }
+        return parsed;
+      }
+      return defaultSettings;
     } catch (e) {
       return defaultSettings;
     }
@@ -77,6 +95,14 @@ class DatabaseManager {
     this.config = { ...this.config, ...newSettings };
     localStorage.setItem('galaxy_academy_settings', JSON.stringify(this.config));
     await this.initFirebase();
+    if (this.isFirebaseActive() && newSettings.passcode) {
+      try {
+        const docRef = doc(this.firestore, "config", "passcode");
+        await setDoc(docRef, { passcode: newSettings.passcode });
+      } catch (err) {
+        console.error("Failed to sync passcode to Firebase:", err);
+      }
+    }
   }
 
   // Initializing Firebase Cloud sync if selected
@@ -103,6 +129,10 @@ class DatabaseManager {
         this.firebaseApp = initializeApp(firebaseConfig);
         this.firestore = getFirestore(this.firebaseApp);
         console.log("Firebase Firestore loaded successfully for Galaxy Academy.");
+        // Sync passcode from server
+        await this.getPasscode();
+        // Auto-seed students to Firebase if the collection is empty
+        await this.autoSeedStudentsToFirebase();
       } catch (err) {
         console.error("Failed to initialize Firebase. Falling back to local offline mode.", err);
         this.firestore = null;
@@ -113,8 +143,58 @@ class DatabaseManager {
     }
   }
 
+  // Passcode verification & sync operations
+  async getPasscode() {
+    if (this.isFirebaseActive()) {
+      try {
+        const docRef = doc(this.firestore, "config", "passcode");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const pcode = docSnap.data().passcode;
+          if (pcode) {
+            this.config.passcode = pcode;
+            localStorage.setItem('galaxy_academy_settings', JSON.stringify(this.config));
+            return pcode;
+          }
+        } else {
+          // Initialize server passcode
+          const pcode = this.config.passcode || '1234';
+          await setDoc(docRef, { passcode: pcode });
+          return pcode;
+        }
+      } catch (err) {
+        console.warn("Failed to fetch passcode from Firebase server. Using local passcode.", err);
+      }
+    }
+    return this.config.passcode || '1234';
+  }
+
+  async verifyPasscode(inputPasscode) {
+    const correct = await this.getPasscode();
+    return inputPasscode === correct;
+  }
+
   isFirebaseActive() {
     return this.config.mode === 'firebase' && this.firestore !== null;
+  }
+
+  // Auto-seed: if Firebase students collection is empty, upload all DEFAULT_STUDENTS
+  async autoSeedStudentsToFirebase() {
+    if (!this.isFirebaseActive()) return;
+    try {
+      const colRef = collection(this.firestore, "students");
+      const snapshot = await getDocs(colRef);
+      if (snapshot.empty) {
+        console.log("Firebase students collection is empty. Auto-seeding 35 default students...");
+        for (const student of DEFAULT_STUDENTS) {
+          const docRef = doc(this.firestore, "students", student.id);
+          await setDoc(docRef, student);
+        }
+        console.log("Auto-seed complete: 35 students uploaded to Firebase.");
+      }
+    } catch (err) {
+      console.error("Auto-seed failed:", err);
+    }
   }
 
   /* ---------------- STUDENT CRUD ---------------- */
@@ -249,17 +329,105 @@ class DatabaseManager {
     return local ? JSON.parse(local) : {};
   }
 
-  async saveTestMarks(testId, subject, results) {
+  async saveTestMarks(testId, subject, results, metadata = {}) {
     const key = `${testId.replace(/\s+/g, '')}_${subject}`;
+    const payload = {
+      testId,
+      subject,
+      results,
+      updatedAt: Date.now(),
+      testType: metadata.testType || 'Test',
+      testNumber: metadata.testNumber || '',
+      date: metadata.date || ''
+    };
+    
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "tests", key);
-        await setDoc(docRef, { testId, subject, results, updatedAt: Date.now() });
+        await setDoc(docRef, payload);
       } catch (err) {
         console.error("Firebase test scores save failed.", err);
       }
     }
+    
     localStorage.setItem(`test_marks_${key}`, JSON.stringify(results));
+    localStorage.setItem(`test_meta_${key}`, JSON.stringify({
+      testId,
+      subject,
+      testType: metadata.testType || 'Test',
+      testNumber: metadata.testNumber || '',
+      date: metadata.date || '',
+      updatedAt: payload.updatedAt
+    }));
+  }
+
+  async getTestMetadata(testId, subject) {
+    const key = `${testId.replace(/\s+/g, '')}_${subject}`;
+    if (this.isFirebaseActive()) {
+      try {
+        const docRef = doc(this.firestore, "tests", key);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          return {
+            testType: data.testType || 'Test',
+            testNumber: data.testNumber || '',
+            date: data.date || ''
+          };
+        }
+      } catch (err) {
+        console.error("Firebase get metadata failed.", err);
+      }
+    }
+    const local = localStorage.getItem(`test_meta_${key}`);
+    return local ? JSON.parse(local) : { testType: 'Test', testNumber: '', date: '' };
+  }
+
+  async getAllTests() {
+    const list = [];
+    if (this.isFirebaseActive()) {
+      try {
+        const colRef = collection(this.firestore, "tests");
+        const snapshot = await getDocs(colRef);
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          list.push({
+            key: doc.id,
+            testId: data.testId || '',
+            subject: data.subject || '',
+            testType: data.testType || 'Test',
+            testNumber: data.testNumber || '',
+            date: data.date || '',
+            updatedAt: data.updatedAt || 0
+          });
+        });
+        return list.sort((a, b) => b.updatedAt - a.updatedAt);
+      } catch (err) {
+        console.error("Firebase load tests failed, pulling local.", err);
+      }
+    }
+    // Pull local fallback
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key.startsWith('test_meta_')) {
+        try {
+          const rawKey = key.replace('test_meta_', '');
+          const data = JSON.parse(localStorage.getItem(key));
+          list.push({
+            key: rawKey,
+            testId: data.testId || '',
+            subject: data.subject || '',
+            testType: data.testType || 'Test',
+            testNumber: data.testNumber || '',
+            date: data.date || '',
+            updatedAt: data.updatedAt || 0
+          });
+        } catch (e) {
+          console.error("Failed to parse local test meta:", e);
+        }
+      }
+    }
+    return list.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   /* ---------------- SYLLABUS OPERATIONS ---------------- */
@@ -299,16 +467,23 @@ class DatabaseManager {
     const syllabus = {};
     const attendance = {};
     const testMarks = {};
+    const testMetadata = {};
 
-    // Gather local or fetch all if in cloud
-    for (let i = 1; i <= 10; i++) {
-      const tId = `Test ${i}`;
-      syllabus[tId] = await this.getSyllabus(tId);
+    // Gather all tests dynamically
+    const allTests = await this.getAllTests();
+    for (const test of allTests) {
+      const key = test.key;
+      testMarks[key] = await this.getTestMarks(test.testId, test.subject);
+      testMetadata[key] = {
+        testId: test.testId,
+        subject: test.subject,
+        testType: test.testType,
+        testNumber: test.testNumber,
+        date: test.date
+      };
       
-      const subjects = ["Maths", "Physics", "Chemistry", "Bio", "CS"];
-      for (const sub of subjects) {
-        const key = `${tId.replace(/\s+/g, '')}_${sub}`;
-        testMarks[key] = await this.getTestMarks(tId, sub);
+      if (!syllabus[test.testId]) {
+        syllabus[test.testId] = await this.getSyllabus(test.testId);
       }
     }
 
@@ -322,10 +497,11 @@ class DatabaseManager {
     }
 
     return JSON.stringify({
-      version: "1.0",
+      version: "2.0",
       students,
       attendance,
       testMarks,
+      testMetadata,
       syllabus
     }, null, 2);
   }
@@ -348,13 +524,26 @@ class DatabaseManager {
         }
       }
 
-      // Load test marks
+      // Load test marks and metadata
       if (data.testMarks) {
         for (const [key, results] of Object.entries(data.testMarks)) {
           const parts = key.split('_');
-          const testId = parts[0].replace('Test', 'Test ');
+          const rawTestId = parts[0];
           const subject = parts[1];
-          await this.saveTestMarks(testId, subject, results);
+          
+          let meta = { testType: 'Test', testNumber: '', date: '' };
+          if (data.testMetadata && data.testMetadata[key]) {
+            meta = data.testMetadata[key];
+          } else {
+            // Parse from key for compatibility
+            const match = rawTestId.match(/^([a-zA-Z]+)(\d+)$/);
+            if (match) {
+              meta.testType = match[1];
+              meta.testNumber = match[2];
+            }
+          }
+          const displayTestId = meta.testId || `${meta.testType} ${meta.testNumber}`;
+          await this.saveTestMarks(displayTestId, subject, results, meta);
         }
       }
 
@@ -398,8 +587,22 @@ class DatabaseManager {
           const testId = parts[0].replace('Test', 'Test ');
           const subject = parts[1];
           const results = JSON.parse(localStorage.getItem(key));
+          
+          // Fetch local metadata if exists
+          const metaKey = `test_meta_${rawKey}`;
+          const localMeta = localStorage.getItem(metaKey);
+          const meta = localMeta ? JSON.parse(localMeta) : {};
+          
           const docRef = doc(this.firestore, "tests", rawKey);
-          await setDoc(docRef, { testId, subject, results });
+          await setDoc(docRef, { 
+            testId: meta.testId || testId, 
+            subject, 
+            results,
+            testType: meta.testType || 'Test',
+            testNumber: meta.testNumber || '',
+            date: meta.date || '',
+            updatedAt: meta.updatedAt || Date.now()
+          });
         }
         
         if (key.startsWith('syllabus_')) {
