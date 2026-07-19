@@ -73,7 +73,10 @@ class DatabaseManager {
       authDomain: DEFAULT_FIREBASE_CONFIG.authDomain || '',
       projectId: DEFAULT_FIREBASE_CONFIG.projectId || '',
       appId: DEFAULT_FIREBASE_CONFIG.appId || '',
-      passcode: '1234'
+      passcode: '1234',
+      twilioSid: '',
+      twilioToken: '',
+      twilioPhone: ''
     };
     try {
       const stored = localStorage.getItem('galaxy_academy_settings');
@@ -82,7 +85,7 @@ class DatabaseManager {
         if (parsed.passcode === undefined) {
           parsed.passcode = '1234';
         }
-        return parsed;
+        return { ...defaultSettings, ...parsed };
       }
       return defaultSettings;
     } catch (e) {

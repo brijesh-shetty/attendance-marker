@@ -115,6 +115,9 @@ class AppController {
       case "attendance":
         await this.loadAttendanceSetup();
         break;
+      case "broadcast":
+        document.getElementById("broadcast-message-input").value = "";
+        break;
       case "tests":
         document.getElementById("test-setup-panel").style.display = "block";
         document.getElementById("test-sheet-panel").style.display = "none";
@@ -763,6 +766,169 @@ class AppController {
   }
 
   /* =========================================================================
+     TWILIO SMS OPERATIONS
+     ========================================================================= */
+  async sendSMS(toNumber, messageText) {
+    const settings = db.getSettings();
+    const sid = settings.twilioSid;
+    const token = settings.twilioToken;
+    const fromNumber = settings.twilioPhone;
+
+    if (!sid || !token || !fromNumber) {
+      throw new Error("Twilio is not configured. Go to settings to set SID, Token, and Phone.");
+    }
+
+    // Format phone number to E.164 (ensure it starts with + and country code, e.g. +91 for India)
+    let formattedTo = toNumber.trim();
+    if (!formattedTo.startsWith("+")) {
+      formattedTo = formattedTo.replace(/^0+/, "");
+      if (formattedTo.length === 10) {
+        formattedTo = "+91" + formattedTo;
+      } else {
+        formattedTo = "+" + formattedTo;
+      }
+    }
+
+    const targetUrl = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
+    const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(targetUrl);
+    const authHeader = "Basic " + btoa(`${sid}:${token}`);
+
+    const response = await fetch(proxyUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": authHeader,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        To: formattedTo,
+        From: fromNumber,
+        Body: messageText
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errObj;
+      try { errObj = JSON.parse(errorText); } catch(e) {}
+      const errMsg = errObj ? errObj.message : `HTTP error! Status: ${response.status}`;
+      throw new Error(errMsg);
+    }
+
+    return await response.json();
+  }
+
+  async handleSendAbsenteesSMS() {
+    const dateVal = document.getElementById("attendance-date-input").value;
+    const students = await db.getStudents();
+    const records = await db.getAttendance(dateVal);
+    
+    const absentees = [];
+    students.forEach(s => {
+      if (records[s.id] === "A") {
+        absentees.push(s);
+      }
+    });
+
+    if (absentees.length === 0) {
+      this.showToast("No absentees to send messages to today!", "info");
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to send SMS notifications to the ${absentees.length} absent student(s)?\n(Note: If you are using a Twilio Trial Account, messages will only deliver to Verified Caller IDs)`)) {
+      return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+    const formattedDate = new Date(dateVal).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    this.showToast(`Starting SMS broadcast to ${absentees.length} parents...`);
+
+    for (const student of absentees) {
+      const phone = student.phone || student.parentPhone;
+      if (!phone) {
+        failCount++;
+        console.warn(`No phone number recorded for student: ${student.name}`);
+        continue;
+      }
+
+      const msg = `Dear Parent, your ward ${student.name} was ABSENT today (${formattedDate}) from Galaxy Academy.`;
+      
+      try {
+        await this.sendSMS(phone, msg);
+        successCount++;
+      } catch (err) {
+        failCount++;
+        console.error(`Failed to send SMS to ${student.name} (${phone}):`, err);
+      }
+    }
+
+    if (successCount > 0) {
+      this.showToast(`Successfully sent ${successCount} SMS notification(s)!`, "success");
+    }
+    if (failCount > 0) {
+      this.showToast(`Failed to send ${failCount} SMS. Check logs.`, "danger");
+    }
+  }
+
+  async handleSendBroadcast() {
+    const target = document.getElementById("broadcast-subject-select").value;
+    const msgText = document.getElementById("broadcast-message-input").value.trim();
+
+    if (!msgText) {
+      this.showToast("Please enter an announcement message first.", "danger");
+      return;
+    }
+
+    const students = await db.getStudents();
+    let targets = [];
+
+    if (target === "all") {
+      targets = students;
+    } else {
+      targets = students.filter(s => s.combination && s.combination.toUpperCase() === target.toUpperCase());
+    }
+
+    if (targets.length === 0) {
+      this.showToast("No students found in the selected target class.", "info");
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to send this broadcast SMS to all ${targets.length} parents?\n(Note: If you are using a Twilio Trial Account, messages will only deliver to Verified Caller IDs)`)) {
+      return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    this.showToast(`Sending broadcast to ${targets.length} parents...`);
+
+    for (const student of targets) {
+      const phone = student.phone || student.parentPhone;
+      if (!phone) {
+        failCount++;
+        continue;
+      }
+
+      try {
+        await this.sendSMS(phone, msgText);
+        successCount++;
+      } catch (err) {
+        failCount++;
+        console.error(`Failed to send broadcast to ${student.name} (${phone}):`, err);
+      }
+    }
+
+    if (successCount > 0) {
+      this.showToast(`Broadcast completed: ${successCount} sent successfully!`, "success");
+      document.getElementById("broadcast-message-input").value = "";
+    }
+    if (failCount > 0) {
+      this.showToast(`Failed to deliver ${failCount} messages.`, "danger");
+    }
+  }
+
+  /* =========================================================================
      SYLLABUS PLANNER (INTEGRATED INTO TESTS VIEW)
      ========================================================================= */
   async loadTestSyllabus() {
@@ -844,9 +1010,13 @@ class AppController {
     document.getElementById("fb-project-id").value = settings.projectId || "";
     document.getElementById("fb-app-id").value = settings.appId || "";
 
+    document.getElementById("twilio-sid-field").value = settings.twilioSid || "";
+    document.getElementById("twilio-token-field").value = settings.twilioToken || "";
+    document.getElementById("twilio-phone-field").value = settings.twilioPhone || "";
+ 
     const fbFields = document.getElementById("firebase-config-fields");
     fbFields.style.display = settings.mode === "firebase" ? "block" : "none";
-
+ 
     document.getElementById("settings-modal").classList.add("active");
     lucide.createIcons();
   }
@@ -854,19 +1024,26 @@ class AppController {
   async handleSaveSettings() {
     const mode = document.getElementById("db-mode-select").value;
     const passcode = document.getElementById("settings-passcode-field").value.trim();
-    const apiKey = document.getElementById("fb-api-key").value.trim();
-    const authDomain = document.getElementById("fb-auth-domain").value.trim();
-    const projectId = document.getElementById("fb-project-id").value.trim();
-    const appId = document.getElementById("fb-app-id").value.trim();
+    const fbApiKey = document.getElementById("fb-api-key").value.trim();
+    const fbAuthDomain = document.getElementById("fb-auth-domain").value.trim();
+    const fbProjectId = document.getElementById("fb-project-id").value.trim();
+    const fbAppId = document.getElementById("fb-app-id").value.trim();
 
+    const twilioSid = document.getElementById("twilio-sid-field").value.trim();
+    const twilioToken = document.getElementById("twilio-token-field").value.trim();
+    const twilioPhone = document.getElementById("twilio-phone-field").value.trim();
+ 
     const currentSettings = db.getSettings();
     const newSettings = { 
       mode, 
       passcode: passcode || currentSettings.passcode || "1234",
-      apiKey, 
-      authDomain, 
-      projectId, 
-      appId 
+      apiKey: fbApiKey, 
+      authDomain: fbAuthDomain, 
+      projectId: fbProjectId, 
+      appId: fbAppId,
+      twilioSid,
+      twilioToken,
+      twilioPhone
     };
     
     // Save settings (triggers initFirebase)
@@ -876,7 +1053,7 @@ class AppController {
     this.showToast("Settings saved successfully.");
 
     if (mode === "firebase") {
-      if (apiKey && projectId) {
+      if (fbApiKey && fbProjectId) {
         this.showToast("Firebase loaded. Uploading offline updates to cloud...");
         const syncResult = await db.pushLocalDataToCloud();
         if (syncResult.success) {
@@ -1074,6 +1251,10 @@ class AppController {
     });
     document.getElementById("save-test-marks-btn").addEventListener("click", () => this.handleSaveTestMarks());
     document.getElementById("print-test-sheet-btn").addEventListener("click", () => this.printMarksSheet());
+
+    // Twilio SMS View Handlers
+    document.getElementById("send-absentees-sms-btn").addEventListener("click", () => this.handleSendAbsenteesSMS());
+    document.getElementById("send-broadcast-btn").addEventListener("click", () => this.handleSendBroadcast());
   }
 }
 

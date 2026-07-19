@@ -163,9 +163,14 @@
             <div id="attendance-report-details" style="font-size: 0.9rem; margin-bottom: 14px;">
               <!-- Rendered by JS -->
             </div>
-            <button class="btn btn-secondary btn-full" id="download-absentees-btn" style="width: 100%;">
-              <i data-lucide="download"></i> Download Absentees List (.txt)
-            </button>
+            <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; width: 100%;">
+              <button class="btn btn-secondary" id="download-absentees-btn" style="flex: 1; padding: 8px 12px; font-size: 0.85rem;">
+                <i data-lucide="download"></i> Download List
+              </button>
+              <button class="btn btn-primary" id="send-absentees-sms-btn" style="flex: 1.2; padding: 8px 12px; font-size: 0.85rem; background-color: var(--primary); border-color: var(--primary);">
+                <i data-lucide="message-square"></i> Send SMS
+              </button>
+            </div>
           </div>
         </div>
 
@@ -287,6 +292,33 @@
         </div>
       </section>
 
+      <!-- 5. BROADCAST ANNOUNCEMENTS VIEW -->
+      <section id="broadcast-view" class="view-section">
+        <h2>Broadcast Announcements</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Send general SMS notifications to student parents using Twilio.</p>
+
+        <div class="card">
+          <div class="input-group">
+            <label for="broadcast-subject-select">Target Class Subject</label>
+            <select id="broadcast-subject-select" class="select-field">
+              <option value="all">All Registered Students</option>
+              <option value="CS">CS Class Students</option>
+              <option value="BIO">Biology Class Students</option>
+              <option value="ELE">Electronics Class Students</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label for="broadcast-message-input">Announcement Message</label>
+            <textarea id="broadcast-message-input" class="textarea-field" rows="5" placeholder="Dear Parent, please note there will be a special test conducted this Sunday. - Galaxy Academy"></textarea>
+          </div>
+
+          <button class="btn btn-primary btn-full" id="send-broadcast-btn">
+            <i data-lucide="send"></i> Send Broadcast SMS
+          </button>
+        </div>
+      </section>
+
 
     </main>
 
@@ -307,6 +339,10 @@
       <div class="nav-item" data-view="tests">
         <i data-lucide="file-text"></i>
         <span>Tests</span>
+      </div>
+      <div class="nav-item" data-view="broadcast">
+        <i data-lucide="megaphone"></i>
+        <span>Broadcast</span>
       </div>
 
     </nav>
@@ -440,6 +476,23 @@
           <div class="input-group">
             <label for="fb-app-id">App ID</label>
             <input type="text" id="fb-app-id" class="input-field" placeholder="1:123456789:web:abcd...">
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 14px;">
+          <h4 style="margin-bottom: 12px; font-size: 0.9rem; color: var(--primary-hover);">Twilio SMS Settings</h4>
+          
+          <div class="input-group">
+            <label for="twilio-sid-field">Twilio Account SID</label>
+            <input type="text" id="twilio-sid-field" class="input-field" placeholder="AC...">
+          </div>
+          <div class="input-group">
+            <label for="twilio-token-field">Twilio Auth Token</label>
+            <input type="password" id="twilio-token-field" class="input-field" placeholder="Auth Token">
+          </div>
+          <div class="input-group" style="margin-bottom: 0;">
+            <label for="twilio-phone-field">Twilio Phone Number</label>
+            <input type="text" id="twilio-phone-field" class="input-field" placeholder="+1234567890">
           </div>
         </div>
 
