@@ -173,9 +173,11 @@ class DatabaseManager {
             return pcode;
           }
         } else {
-          // Initialize server passcode
+          // Initialize server passcode in background without blocking
           const pcode = this.config.passcode || '1234';
-          await setDoc(docRef, { passcode: pcode });
+          setDoc(docRef, { passcode: pcode }).catch(err => {
+            console.warn("Failed to initialize server passcode in Firebase:", err);
+          });
           return pcode;
         }
       } catch (err) {
