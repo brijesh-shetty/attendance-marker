@@ -1,4 +1,4 @@
-const CACHE_NAME = 'galaxy-academy-cache-v3';
+const CACHE_NAME = 'galaxy-academy-cache-v4';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -42,33 +42,37 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch Event (Cache-first with network fallback)
+// Fetch Event (Network-first with cache fallback)
 self.addEventListener('fetch', (event) => {
   // Only cache GET requests
   if (event.request.method !== 'GET') return;
 
-  // Skip Firebase Firestore API or authentication endpoints
-  if (event.request.url.includes('firestore.googleapis.com') || event.request.url.includes('firebase')) {
+  // Skip Firebase/Firestore and Twilio API endpoints
+  if (event.request.url.includes('firestore.googleapis.com') || 
+      event.request.url.includes('firebase') ||
+      event.request.url.includes('api.twilio.com') ||
+      event.request.url.includes('corsproxy.io')) {
     return;
   }
 
   event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        if (cachedResponse) {
-          return cachedResponse;
+    fetch(event.request)
+      .then((networkResponse) => {
+        // If response is valid, clone and update cache
+        if (networkResponse && networkResponse.status === 200) {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
         }
-        return fetch(event.request).then((networkResponse) => {
-          // If response is valid, clone and cache it
-          if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
+        return networkResponse;
+      })
+      .catch(() => {
+        // Offline: fall back to cache
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
           }
-          return networkResponse;
-        }).catch(() => {
-          // If offline and request fails
           return new Response('Network request failed and offline fallback not available.', {
             status: 503,
             statusText: 'Service Unavailable'
@@ -77,3 +81,4 @@ self.addEventListener('fetch', (event) => {
       })
   );
 });
+
