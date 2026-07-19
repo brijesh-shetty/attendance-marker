@@ -12,7 +12,8 @@ class AppController {
       dashboard: document.getElementById("dashboard-view"),
       students: document.getElementById("students-view"),
       attendance: document.getElementById("attendance-view"),
-      tests: document.getElementById("tests-view")
+      tests: document.getElementById("tests-view"),
+      broadcast: document.getElementById("broadcast-view")
     };
 
     this.navItems = document.querySelectorAll(".bottom-nav .nav-item");
