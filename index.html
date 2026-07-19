@@ -36,6 +36,47 @@
 </head>
 <body>
 
+  <!-- Temporary Visual Debug Console -->
+  <div id="visual-debug-console" style="position: fixed; bottom: 10px; right: 10px; width: 320px; max-height: 250px; overflow-y: auto; background: rgba(9, 13, 22, 0.95); color: #10b981; font-family: monospace; font-size: 0.75rem; z-index: 99999; padding: 12px; border-radius: 8px; border: 1px dashed var(--primary); pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+    <strong style="color: var(--primary-hover); display: block; margin-bottom: 6px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">Visual Debug Console</strong>
+    <div id="debug-logs" style="pointer-events: auto;"></div>
+  </div>
+  <script>
+    (function() {
+      const logsDiv = document.getElementById('debug-logs');
+      function addLog(msg, color = '#e2e8f0') {
+        const p = document.createElement('div');
+        p.style.color = color;
+        p.style.margin = '4px 0';
+        p.style.wordBreak = 'break-all';
+        p.innerText = msg;
+        logsDiv.appendChild(p);
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
+      const _log = console.log;
+      const _warn = console.warn;
+      const _error = console.error;
+      console.log = function(...args) {
+        _log.apply(console, args);
+        addLog(args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' '), '#e2e8f0');
+      };
+      console.warn = function(...args) {
+        _warn.apply(console, args);
+        addLog('⚠️ ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' '), '#fbbf24');
+      };
+      console.error = function(...args) {
+        _error.apply(console, args);
+        addLog('❌ ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' '), '#f87171');
+      };
+      window.addEventListener('error', function(e) {
+        addLog('🚨 Global Error: ' + e.message + ' at ' + e.filename + ':' + e.lineno, '#f87171');
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        addLog('🚨 Unhandled Promise Rejection: ' + e.reason, '#f87171');
+      });
+    })();
+  </script>
+
   <!-- Fullscreen Login Overlay -->
   <div id="login-overlay" class="login-overlay">
     <div class="login-card">
