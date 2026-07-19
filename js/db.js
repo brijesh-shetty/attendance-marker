@@ -146,12 +146,25 @@ class DatabaseManager {
     }
   }
 
+  // Helper to execute a promise with a timeout (prevents database hangs under offline/unstable networks)
+  async runWithTimeout(promise, timeoutMs = 2500) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error("Database request timeout"));
+      }, timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+      clearTimeout(timeoutId);
+    });
+  }
+
   // Passcode verification & sync operations
   async getPasscode() {
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "config", "passcode");
-        const docSnap = await getDoc(docRef);
+        const docSnap = await this.runWithTimeout(getDoc(docRef), 2000);
         if (docSnap.exists()) {
           const pcode = docSnap.data().passcode;
           if (pcode) {
@@ -186,7 +199,7 @@ class DatabaseManager {
     if (!this.isFirebaseActive()) return;
     try {
       const colRef = collection(this.firestore, "students");
-      const snapshot = await getDocs(colRef);
+      const snapshot = await this.runWithTimeout(getDocs(colRef), 2500);
       if (snapshot.empty) {
         console.log("Firebase students collection is empty. Auto-seeding 35 default students...");
         for (const student of DEFAULT_STUDENTS) {
@@ -205,7 +218,7 @@ class DatabaseManager {
     if (this.isFirebaseActive()) {
       try {
         const colRef = collection(this.firestore, "students");
-        const snapshot = await getDocs(colRef);
+        const snapshot = await this.runWithTimeout(getDocs(colRef), 2500);
         const list = [];
         snapshot.forEach(doc => {
           list.push({ id: doc.id, ...doc.data() });
@@ -290,7 +303,7 @@ class DatabaseManager {
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "attendance", dateString);
-        const docSnap = await getDoc(docRef);
+        const docSnap = await this.runWithTimeout(getDoc(docRef), 2000);
         if (docSnap.exists()) {
           return docSnap.data().records || {};
         }
@@ -320,7 +333,7 @@ class DatabaseManager {
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "tests", key);
-        const docSnap = await getDoc(docRef);
+        const docSnap = await this.runWithTimeout(getDoc(docRef), 2500);
         if (docSnap.exists()) {
           return docSnap.data().results || {};
         }
@@ -369,7 +382,7 @@ class DatabaseManager {
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "tests", key);
-        const docSnap = await getDoc(docRef);
+        const docSnap = await this.runWithTimeout(getDoc(docRef), 2000);
         if (docSnap.exists()) {
           const data = docSnap.data();
           return {
@@ -391,7 +404,7 @@ class DatabaseManager {
     if (this.isFirebaseActive()) {
       try {
         const colRef = collection(this.firestore, "tests");
-        const snapshot = await getDocs(colRef);
+        const snapshot = await this.runWithTimeout(getDocs(colRef), 3000);
         snapshot.forEach(doc => {
           const data = doc.data();
           list.push({
@@ -439,7 +452,7 @@ class DatabaseManager {
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "syllabus", key);
-        const docSnap = await getDoc(docRef);
+        const docSnap = await this.runWithTimeout(getDoc(docRef), 2500);
         if (docSnap.exists()) {
           return docSnap.data().subjects || {};
         }
