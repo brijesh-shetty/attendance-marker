@@ -161,12 +161,20 @@ class DatabaseManager {
 
   // Passcode verification & sync operations
   async getPasscode() {
+    console.log("[DB] getPasscode() called. Firebase active?", this.isFirebaseActive());
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "config", "passcode");
+        console.log("[DB] Querying passcode from Firebase server...");
         const docSnap = await this.runWithTimeout(getDoc(docRef), 2000);
+        console.log("[DB] Passcode document snapshot loaded. Exists?", docSnap.exists());
         if (docSnap.exists()) {
-          const pcode = docSnap.data().passcode;
+          let pcode = docSnap.data().passcode;
+          if (pcode && pcode.startsWith("AIzaSy")) {
+            console.warn("[DB] Corrupted passcode detected (API Key). Resetting to '1234'...");
+            pcode = "1234";
+            setDoc(docRef, { passcode: "1234" }).catch(e => {});
+          }
           if (pcode) {
             this.config.passcode = pcode;
             localStorage.setItem('galaxy_academy_settings', JSON.stringify(this.config));
@@ -175,6 +183,7 @@ class DatabaseManager {
         } else {
           // Initialize server passcode in background without blocking
           const pcode = this.config.passcode || '1234';
+          console.log(`[DB] Passcode doc missing. Writing default "${pcode}" asynchronously...`);
           setDoc(docRef, { passcode: pcode }).catch(err => {
             console.warn("Failed to initialize server passcode in Firebase:", err);
           });
@@ -184,11 +193,20 @@ class DatabaseManager {
         console.warn("Failed to fetch passcode from Firebase server. Using local passcode.", err);
       }
     }
-    return this.config.passcode || '1234';
+    let localPasscode = this.config.passcode || '1234';
+    if (localPasscode.startsWith("AIzaSy")) {
+      localPasscode = "1234";
+      this.config.passcode = "1234";
+      localStorage.setItem('galaxy_academy_settings', JSON.stringify(this.config));
+    }
+    console.log(`[DB] Returning passcode: "${localPasscode}"`);
+    return localPasscode;
   }
 
   async verifyPasscode(inputPasscode) {
+    console.log(`[DB] verifyPasscode() called with: "${inputPasscode}"`);
     const correct = await this.getPasscode();
+    console.log(`[DB] Comparing input "${inputPasscode}" against correct passcode "${correct}"`);
     return inputPasscode === correct;
   }
 

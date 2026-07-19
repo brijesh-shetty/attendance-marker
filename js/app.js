@@ -1125,15 +1125,21 @@ class AppController {
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const inputVal = document.getElementById("login-passcode").value;
-      const isValid = await db.verifyPasscode(inputVal);
-      if (isValid) {
-        sessionStorage.setItem("ga_logged_in", "true");
-        this.hideLoginScreen();
-        this.switchView("dashboard");
-        document.getElementById("login-passcode").value = "";
-        this.showToast("Login successful. Welcome admin!");
-      } else {
-        this.showToast("Incorrect passcode. Access Denied.", "danger");
+      console.log(`[Login] Submit clicked. Input length: ${inputVal.length}`);
+      try {
+        const isValid = await db.verifyPasscode(inputVal);
+        console.log(`[Login] Validation result: ${isValid}`);
+        if (isValid) {
+          sessionStorage.setItem("ga_logged_in", "true");
+          this.hideLoginScreen();
+          this.switchView("dashboard");
+          document.getElementById("login-passcode").value = "";
+          this.showToast("Login successful. Welcome admin!");
+        } else {
+          this.showToast("Incorrect passcode. Access Denied.", "danger");
+        }
+      } catch (err) {
+        console.error("[Login] Error validating passcode:", err);
       }
     });
 
