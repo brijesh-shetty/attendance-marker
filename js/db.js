@@ -9,70 +9,87 @@ import {
   deleteDoc 
 } from "firebase/firestore";
 
-const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyB2YJOFV6qFzDfuMjL2aGKHgq4Eb_f05Jo",
-  authDomain: "galaxyacademy-5.firebaseapp.com",
-  projectId: "galaxyacademy-5",
-  storageBucket: "galaxyacademy-5.firebasestorage.app",
-  messagingSenderId: "178445479028",
-  appId: "1:178445479028:web:42dbad5f82cd4d3b6af521"
-};
+// Fetch Firebase config from server (env vars) instead of hardcoding in frontend
+async function fetchFirebaseConfig() {
+  try {
+    const response = await fetch('/api/config/firebase');
+    if (!response.ok) throw new Error('Failed to fetch Firebase config');
+    const config = await response.json();
+    // Cache for offline fallback
+    if (config.apiKey && config.projectId) {
+      localStorage.setItem('ga_firebase_config_cache', JSON.stringify(config));
+    }
+    return config;
+  } catch (err) {
+    console.warn('Could not fetch Firebase config from server. Using cached config.', err);
+    const cached = localStorage.getItem('ga_firebase_config_cache');
+    if (cached) {
+      return JSON.parse(cached);
+    }
+    return { apiKey: '', authDomain: '', projectId: '', storageBucket: '', messagingSenderId: '', appId: '' };
+  }
+}
 
 const DEFAULT_STUDENTS = [
-  { id: "stu_sheet_1", name: "SHAFFRINA HAIYED", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_2", name: "DIVYESH M", combination: "CS", college: "SFS", phone: "", parentPhone: "" },
-  { id: "stu_sheet_3", name: "ALWINA", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_4", name: "VANDHANA SHETTY", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_5", name: "SHRADDA G", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_6", name: "DEEPIKA BHUI", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_7", name: "JEEVITHA MAHESH", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_8", name: "MADHUMITHA P", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_9", name: "SARANYA R", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_10", name: "SONIKA M", combination: "CS", college: "SFS", phone: "", parentPhone: "" },
-  { id: "stu_sheet_11", name: "SAHANA M K", combination: "CS", college: "SFS", phone: "", parentPhone: "" },
-  { id: "stu_sheet_12", name: "GALLIBIOYINA MAHITHA", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_13", name: "KEVIN J", combination: "ELE", college: "SFS", phone: "", parentPhone: "" },
-  { id: "stu_sheet_14", name: "ROOPASHREE", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_15", name: "KRUPA A", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_16", name: "NANDHANA", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_17", name: "THULASI SHREE", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_18", name: "HEMADRI G K", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_19", name: "MONISH", combination: "CS", college: "CJC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_20", name: "NAMRATHA", combination: "BIO", college: "CJC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_21", name: "HILMA M B", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_22", name: "ABHINAYA M", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_23", name: "SUKRITI K SHETTY", combination: "BIO", college: "CJC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_24", name: "SAGAR K V", combination: "ELE", college: "SFS", phone: "", parentPhone: "" },
-  { id: "stu_sheet_25", name: "NETHRA V", combination: "BIO", college: "SFS", phone: "", parentPhone: "" },
-  { id: "stu_sheet_26", name: "ANUSHKA G", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_27", name: "KANISHKA", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_28", name: "LIKITHA S N", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_29", name: "RISHI RAJ", combination: "ELE", college: "SFS", phone: "", parentPhone: "" },
-  { id: "stu_sheet_30", name: "JANANI K", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_31", name: "MAHASRI", combination: "BIO", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_32", name: "SHREEJA", combination: "BIO", college: "CJC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_33", name: "DEEPTHI D", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_34", name: "DHANA LAKSHMI", combination: "CS", college: "JNC", phone: "", parentPhone: "" },
-  { id: "stu_sheet_35", name: "SHILPA", combination: "CS", college: "JNC", phone: "", parentPhone: "" }
+  { id: "1", name: "SHAFFRINA HAIYED", combination: "CS", college: "JNC", phone: "9876543201", parentPhone: "" },
+  { id: "2", name: "DIVYESH M", combination: "CS", college: "SFS", phone: "9876543202", parentPhone: "" },
+  { id: "3", name: "ALWINA", combination: "CS", college: "JNC", phone: "9876543203", parentPhone: "" },
+  { id: "4", name: "VANDHANA SHETTY", combination: "BIO", college: "JNC", phone: "9876543204", parentPhone: "" },
+  { id: "5", name: "SHRADDA G", combination: "BIO", college: "JNC", phone: "9876543205", parentPhone: "" },
+  { id: "6", name: "DEEPIKA BHUI", combination: "CS", college: "JNC", phone: "9876543206", parentPhone: "" },
+  { id: "7", name: "JEEVITHA MAHESH", combination: "BIO", college: "JNC", phone: "9876543207", parentPhone: "" },
+  { id: "8", name: "MADHUMITHA P", combination: "BIO", college: "JNC", phone: "9876543208", parentPhone: "" },
+  { id: "9", name: "SARANYA R", combination: "CS", college: "JNC", phone: "9876543209", parentPhone: "" },
+  { id: "10", name: "SONIKA M", combination: "CS", college: "SFS", phone: "9876543210", parentPhone: "" },
+  { id: "11", name: "SAHANA M K", combination: "CS", college: "SFS", phone: "9876543211", parentPhone: "" },
+  { id: "12", name: "GALLIBIOYINA MAHITHA", combination: "CS", college: "JNC", phone: "9876543212", parentPhone: "" },
+  { id: "13", name: "KEVIN J", combination: "ELE", college: "SFS", phone: "9876543213", parentPhone: "" },
+  { id: "14", name: "ROOPASHREE", combination: "BIO", college: "JNC", phone: "9876543214", parentPhone: "" },
+  { id: "15", name: "KRUPA A", combination: "CS", college: "JNC", phone: "9876543215", parentPhone: "" },
+  { id: "16", name: "NANDHANA", combination: "CS", college: "JNC", phone: "9876543216", parentPhone: "" },
+  { id: "17", name: "THULASI SHREE", combination: "CS", college: "JNC", phone: "9876543217", parentPhone: "" },
+  { id: "18", name: "HEMADRI G K", combination: "BIO", college: "JNC", phone: "9876543218", parentPhone: "" },
+  { id: "19", name: "MONISH", combination: "CS", college: "CJC", phone: "9876543219", parentPhone: "" },
+  { id: "20", name: "NAMRATHA", combination: "BIO", college: "CJC", phone: "9876543220", parentPhone: "" },
+  { id: "21", name: "HILMA M B", combination: "BIO", college: "JNC", phone: "9876543221", parentPhone: "" },
+  { id: "22", name: "ABHINAYA M", combination: "BIO", college: "JNC", phone: "9876543222", parentPhone: "" },
+  { id: "23", name: "SUKRITI K SHETTY", combination: "BIO", college: "CJC", phone: "9876543223", parentPhone: "" },
+  { id: "24", name: "SAGAR K V", combination: "ELE", college: "SFS", phone: "9876543224", parentPhone: "" },
+  { id: "25", name: "NETHRA V", combination: "BIO", college: "SFS", phone: "9876543225", parentPhone: "" },
+  { id: "26", name: "ANUSHKA G", combination: "CS", college: "JNC", phone: "9876543226", parentPhone: "" },
+  { id: "27", name: "KANISHKA", combination: "CS", college: "JNC", phone: "9876543227", parentPhone: "" },
+  { id: "28", name: "LIKITHA S N", combination: "CS", college: "JNC", phone: "9876543228", parentPhone: "" },
+  { id: "29", name: "RISHI RAJ", combination: "ELE", college: "SFS", phone: "9876543229", parentPhone: "" },
+  { id: "30", name: "JANANI K", combination: "BIO", college: "JNC", phone: "9876543230", parentPhone: "" },
+  { id: "31", name: "MAHASRI", combination: "BIO", college: "JNC", phone: "9876543231", parentPhone: "" },
+  { id: "32", name: "SHREEJA", combination: "BIO", college: "CJC", phone: "9876543232", parentPhone: "" },
+  { id: "33", name: "DEEPTHI D", combination: "CS", college: "JNC", phone: "9876543233", parentPhone: "" },
+  { id: "34", name: "DHANA LAKSHMI", combination: "CS", college: "JNC", phone: "9876543234", parentPhone: "" },
+  { id: "35", name: "SHILPA", combination: "CS", college: "JNC", phone: "9876543235", parentPhone: "" }
 ];
 
 class DatabaseManager {
   constructor() {
     this.firebaseApp = null;
     this.firestore = null;
-    this.config = this.getSettings();
-    this.initFirebase();
+    this.ready = this._init(); // Async initialization — await db.ready before first use
+  }
+
+  async _init() {
+    const firebaseConfig = await fetchFirebaseConfig();
+    this.config = this.getSettings(firebaseConfig);
+    await this.initFirebase();
   }
 
   // Load configuration from local storage
-  getSettings() {
-    const hasDefault = DEFAULT_FIREBASE_CONFIG.apiKey && DEFAULT_FIREBASE_CONFIG.projectId;
+  getSettings(firebaseConfig = {}) {
+    const hasDefault = firebaseConfig.apiKey && firebaseConfig.projectId;
     const defaultSettings = {
       mode: hasDefault ? 'firebase' : 'local', // 'local' or 'firebase'
-      apiKey: DEFAULT_FIREBASE_CONFIG.apiKey || '',
-      authDomain: DEFAULT_FIREBASE_CONFIG.authDomain || '',
-      projectId: DEFAULT_FIREBASE_CONFIG.projectId || '',
-      appId: DEFAULT_FIREBASE_CONFIG.appId || '',
+      apiKey: firebaseConfig.apiKey || '',
+      authDomain: firebaseConfig.authDomain || '',
+      projectId: firebaseConfig.projectId || '',
+      appId: firebaseConfig.appId || '',
       passcode: '1234',
       twilioSid: '',
       twilioToken: '',
@@ -131,7 +148,6 @@ class DatabaseManager {
         // Initialize default app
         this.firebaseApp = initializeApp(firebaseConfig);
         this.firestore = getFirestore(this.firebaseApp);
-        console.log("Firebase Firestore loaded successfully for Galaxy Academy.");
         // Sync passcode from server
         await this.getPasscode();
         // Auto-seed students to Firebase if the collection is empty
@@ -161,13 +177,10 @@ class DatabaseManager {
 
   // Passcode verification & sync operations
   async getPasscode() {
-    console.log("[DB] getPasscode() called. Firebase active?", this.isFirebaseActive());
     if (this.isFirebaseActive()) {
       try {
         const docRef = doc(this.firestore, "config", "passcode");
-        console.log("[DB] Querying passcode from Firebase server...");
         const docSnap = await this.runWithTimeout(getDoc(docRef), 2000);
-        console.log("[DB] Passcode document snapshot loaded. Exists?", docSnap.exists());
         if (docSnap.exists()) {
           let pcode = docSnap.data().passcode;
           if (pcode && pcode.startsWith("AIzaSy")) {
@@ -183,7 +196,6 @@ class DatabaseManager {
         } else {
           // Initialize server passcode in background without blocking
           const pcode = this.config.passcode || '1234';
-          console.log(`[DB] Passcode doc missing. Writing default "${pcode}" asynchronously...`);
           setDoc(docRef, { passcode: pcode }).catch(err => {
             console.warn("Failed to initialize server passcode in Firebase:", err);
           });
@@ -199,14 +211,11 @@ class DatabaseManager {
       this.config.passcode = "1234";
       localStorage.setItem('galaxy_academy_settings', JSON.stringify(this.config));
     }
-    console.log(`[DB] Returning passcode: "${localPasscode}"`);
     return localPasscode;
   }
 
   async verifyPasscode(inputPasscode) {
-    console.log(`[DB] verifyPasscode() called with: "${inputPasscode}"`);
     const correct = await this.getPasscode();
-    console.log(`[DB] Comparing input "${inputPasscode}" against correct passcode "${correct}"`);
     return inputPasscode === correct;
   }
 
@@ -221,12 +230,10 @@ class DatabaseManager {
       const colRef = collection(this.firestore, "students");
       const snapshot = await this.runWithTimeout(getDocs(colRef), 2500);
       if (snapshot.empty) {
-        console.log("Firebase students collection is empty. Auto-seeding 35 default students...");
         for (const student of DEFAULT_STUDENTS) {
           const docRef = doc(this.firestore, "students", student.id);
           await setDoc(docRef, student);
         }
-        console.log("Auto-seed complete: 35 students uploaded to Firebase.");
       }
     } catch (err) {
       console.error("Auto-seed failed:", err);
@@ -374,7 +381,9 @@ class DatabaseManager {
       updatedAt: Date.now(),
       testType: metadata.testType || 'Test',
       testNumber: metadata.testNumber || '',
-      date: metadata.date || ''
+      date: metadata.date || '',
+      cetTotal: metadata.cetTotal !== undefined ? Number(metadata.cetTotal) : 25,
+      theoryTotal: metadata.theoryTotal !== undefined ? Number(metadata.theoryTotal) : 25
     };
     
     if (this.isFirebaseActive()) {
@@ -393,6 +402,8 @@ class DatabaseManager {
       testType: metadata.testType || 'Test',
       testNumber: metadata.testNumber || '',
       date: metadata.date || '',
+      cetTotal: metadata.cetTotal !== undefined ? Number(metadata.cetTotal) : 25,
+      theoryTotal: metadata.theoryTotal !== undefined ? Number(metadata.theoryTotal) : 25,
       updatedAt: payload.updatedAt
     }));
   }
@@ -408,7 +419,9 @@ class DatabaseManager {
           return {
             testType: data.testType || 'Test',
             testNumber: data.testNumber || '',
-            date: data.date || ''
+            date: data.date || '',
+            cetTotal: data.cetTotal !== undefined ? Number(data.cetTotal) : 25,
+            theoryTotal: data.theoryTotal !== undefined ? Number(data.theoryTotal) : 25
           };
         }
       } catch (err) {
@@ -416,7 +429,21 @@ class DatabaseManager {
       }
     }
     const local = localStorage.getItem(`test_meta_${key}`);
-    return local ? JSON.parse(local) : { testType: 'Test', testNumber: '', date: '' };
+    if (local) {
+      try {
+        const data = JSON.parse(local);
+        return {
+          testType: data.testType || 'Test',
+          testNumber: data.testNumber || '',
+          date: data.date || '',
+          cetTotal: data.cetTotal !== undefined ? Number(data.cetTotal) : 25,
+          theoryTotal: data.theoryTotal !== undefined ? Number(data.theoryTotal) : 25
+        };
+      } catch (e) {
+        console.error("Failed to parse test meta local storage:", e);
+      }
+    }
+    return { testType: 'Test', testNumber: '', date: '', cetTotal: 25, theoryTotal: 25 };
   }
 
   async getAllTests() {
@@ -434,6 +461,8 @@ class DatabaseManager {
             testType: data.testType || 'Test',
             testNumber: data.testNumber || '',
             date: data.date || '',
+            cetTotal: data.cetTotal !== undefined ? Number(data.cetTotal) : 25,
+            theoryTotal: data.theoryTotal !== undefined ? Number(data.theoryTotal) : 25,
             updatedAt: data.updatedAt || 0
           });
         });
@@ -456,6 +485,8 @@ class DatabaseManager {
             testType: data.testType || 'Test',
             testNumber: data.testNumber || '',
             date: data.date || '',
+            cetTotal: data.cetTotal !== undefined ? Number(data.cetTotal) : 25,
+            theoryTotal: data.theoryTotal !== undefined ? Number(data.theoryTotal) : 25,
             updatedAt: data.updatedAt || 0
           });
         } catch (e) {
@@ -633,10 +664,8 @@ class DatabaseManager {
           await setDoc(docRef, { 
             testId: meta.testId || testId, 
             subject, 
-            results,
-            testType: meta.testType || 'Test',
-            testNumber: meta.testNumber || '',
-            date: meta.date || '',
+            cetTotal: meta.cetTotal !== undefined ? Number(meta.cetTotal) : 25,
+            theoryTotal: meta.theoryTotal !== undefined ? Number(meta.theoryTotal) : 25,
             updatedAt: meta.updatedAt || Date.now()
           });
         }
@@ -648,15 +677,113 @@ class DatabaseManager {
           await setDoc(docRef, { testId, subjects });
         }
       }
-      console.log("Firebase cloud sync completed successfully.");
       return { success: true };
     } catch (err) {
       console.error("Failed cloud migration.", err);
       return { success: false, error: err.message || err.toString() };
     }
   }
+
+  /* ---------------- ATTENDANCE MONTHLY OPERATIONS ---------------- */
+  async getAllAttendanceForMonth(year, month) {
+    const prefix = `${year}-${String(month).padStart(2, '0')}`;
+    const result = {};
+    
+    if (this.isFirebaseActive()) {
+      try {
+        const colRef = collection(this.firestore, "attendance");
+        const snapshot = await this.runWithTimeout(getDocs(colRef), 3000);
+        snapshot.forEach(doc => {
+          const date = doc.id; // YYYY-MM-DD
+          if (date.startsWith(prefix)) {
+            result[date] = doc.data().records || {};
+          }
+        });
+        return result;
+      } catch (err) {
+        console.error("Firebase load attendance for month failed, pulling local.", err);
+      }
+    }
+    
+    // Local fallback
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key.startsWith(`att_${prefix}`)) {
+        const date = key.replace('att_', '');
+        try {
+          result[date] = JSON.parse(localStorage.getItem(key)) || {};
+        } catch (e) {
+          console.error("Failed to parse local attendance data:", e);
+        }
+      }
+    }
+    return result;
+  }
+
+  /* ---------------- PAYMENTS OPERATIONS ---------------- */
+  async getPayments() {
+    const local = localStorage.getItem('ga_payments');
+    return local ? JSON.parse(local) : {};
+  }
+
+  async savePayment(studentId, monthYearStr, status, amount = "", notes = "") {
+    const payments = await this.getPayments();
+    if (!payments[studentId]) payments[studentId] = {};
+    payments[studentId][monthYearStr] = {
+      status, // 'paid', 'due', 'partial'
+      amount,
+      notes,
+      updatedAt: Date.now()
+    };
+    localStorage.setItem('ga_payments', JSON.stringify(payments));
+    
+    if (this.isFirebaseActive()) {
+      try {
+        const docRef = doc(this.firestore, "payments", studentId);
+        await setDoc(docRef, { studentId, records: payments[studentId] });
+      } catch (e) {
+        console.warn("Failed to sync payment to Firebase:", e);
+      }
+    }
+    return payments[studentId][monthYearStr];
+  }
+
+  async getStudentPayments(studentId) {
+    const payments = await this.getPayments();
+    return payments[studentId] || {};
+  }
+
+  /* ---------------- STUDENT AUTH & CREDENTIALS ---------------- */
+  async verifyStudentLogin(studentId, password) {
+    const students = await this.getStudents();
+    const student = students.find(s => s.id.toString() === studentId.toString());
+    if (!student) return { success: false, message: "Student ID not found." };
+
+    // Check custom password storage
+    const customPass = localStorage.getItem(`stu_pass_${student.id}`);
+    const expectedPass = customPass || student.phone || student.parentPhone || "123456";
+
+    if (password === expectedPass) {
+      return { success: true, student };
+    } else {
+      return { success: false, message: "Incorrect password." };
+    }
+  }
+
+  async changeStudentPassword(studentId, oldPassword, newPassword) {
+    const verification = await this.verifyStudentLogin(studentId, oldPassword);
+    if (!verification.success) {
+      return { success: false, message: "Current password is incorrect." };
+    }
+    localStorage.setItem(`stu_pass_${studentId}`, newPassword);
+    return { success: true, message: "Password updated successfully!" };
+  }
+
+  async resetStudentPassword(studentId) {
+    localStorage.removeItem(`stu_pass_${studentId}`);
+    return { success: true, message: "Password reset to parent phone number!" };
+  }
 }
 
 // Single instance of database controller
 export const db = new DatabaseManager();
-window.appDbInstance = db; // expose to window for diagnostic checks

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Galaxy Academy - Student Portal</title>
+  
+  <!-- CSS Stylesheets -->
+  <link rel="stylesheet" href="../css/variables.css">
+  <link rel="stylesheet" href="../css/base.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/layout.css">
+  <link rel="stylesheet" href="../css/student-portal.css">
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Google Fonts - Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="manifest" href="../manifest.json">
+  <meta name="theme-color" content="#3b82f6">
+
+  <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"
+      }
+    }
+  </script>
+</head>
+<body class="student-theme">
+
+  <!-- Fullscreen Login Overlay -->
+  <div id="student-login-overlay" class="login-overlay" style="display: flex;">
+    <div class="login-card" style="border-top: 4px solid var(--student-accent);">
+      <div class="brand" style="margin-bottom: 20px; justify-content: center;">
+        <i data-lucide="graduation-cap" style="color: var(--student-accent); width: 32px; height: 32px;"></i>
+        <h1 style="font-size: 1.6rem; font-weight: 800;">Galaxy Academy</h1>
+      </div>
+      <h2 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; text-align: center; color: var(--text-main);">Student Login</h2>
+      <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; margin-bottom: 20px;">Enter your Student ID and Password (default: parent phone number).</p>
+      
+      <form id="student-login-form">
+        <div class="input-group">
+          <label for="student-id-input">Student ID</label>
+          <input type="number" id="student-id-input" class="input-field" placeholder="e.g. 1" required style="font-size: 1.1rem; text-align: center;">
+        </div>
+        <div class="input-group">
+          <label for="student-password-input">Password</label>
+          <input type="password" id="student-password-input" class="input-field" placeholder="Parent Phone Number" required style="font-size: 1.1rem; text-align: center;">
+        </div>
+        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 10px; font-weight: 700; background-color: var(--student-accent); border-color: var(--student-accent);">
+          <i data-lucide="log-in"></i> Login to Portal
+        </button>
+      </form>
+      <div style="margin-top: 18px; text-align: center;">
+        <a href="../" style="color: var(--text-muted); font-size: 0.8rem; text-decoration: none;">← Back to Main Website</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-container" style="display: block;">
+    
+    <!-- Top Header -->
+    <header class="student-portal-header">
+      <div class="student-profile-bar">
+        <div class="student-avatar" id="student-avatar-initials">S</div>
+        <div>
+          <h1 class="student-portal-title" id="display-student-name">Student Name</h1>
+          <span class="student-id-tag">ID: <span id="display-student-id">#--</span> | <span id="display-student-comb">--</span></span>
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="settings-btn" id="open-change-pass-btn" title="Change Password">
+          <i data-lucide="key-round"></i>
+        </button>
+        <button class="settings-btn" id="student-logout-btn" title="Logout">
+          <i data-lucide="log-out"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main View Contents -->
+    <main class="view-container">
+      
+      <!-- 1. STUDENT DASHBOARD VIEW -->
+      <section id="student-dashboard-view" class="view-section active">
+        <div class="card" style="border-left: 4px solid var(--student-accent);">
+          <h2 style="font-size: 1.25rem; margin-bottom: 4px;">Welcome back, <span id="dash-welcome-name">Student</span>!</h2>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">Here is your personal attendance, test results, and fee summary.</p>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-num" id="stat-student-attendance" style="color: var(--status-paid);">--%</div>
+            <div class="stat-label">My Attendance</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="stat-student-fee-badge">--</div>
+            <div class="stat-label">Current Fee Status</div>
+          </div>
+        </div>
+
+        <!-- Attendance Summary Card -->
+        <div class="card">
+          <div class="card-title">
+            <span>Recent Attendance</span>
+            <i data-lucide="calendar" style="color: var(--student-accent); width: 18px; height: 18px;"></i>
+          </div>
+          <div id="dash-recent-attendance-list">
+            <p style="color: var(--text-muted); font-style: italic;">Loading attendance history...</p>
+          </div>
+        </div>
+
+        <!-- Recent Test Score Card -->
+        <div class="card">
+          <div class="card-title">
+            <span>Latest Test Performance</span>
+            <i data-lucide="file-text" style="color: var(--primary-hover); width: 18px; height: 18px;"></i>
+          </div>
+          <div id="dash-latest-test-info">
+            <p style="color: var(--text-muted); font-style: italic;">Loading latest test result...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. MY ATTENDANCE VIEW -->
+      <section id="student-attendance-view" class="view-section">
+        <h2>My Attendance Record</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">View detailed record of your class attendance history.</p>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Attendance History</span>
+            <span id="student-attendance-summary-badge" style="font-size: 0.8rem; background-color: var(--border-color); padding: 2px 8px; border-radius: 12px;">-- Present</span>
+          </div>
+          <div id="student-attendance-history-container" class="attendance-history-list">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. MY MARKS VIEW -->
+      <section id="student-marks-view" class="view-section">
+        <h2>My Test Results</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Track your scores across all subjects and test series.</p>
+
+        <div id="student-marks-list-container">
+          <!-- Rendered by JS -->
+        </div>
+      </section>
+
+      <!-- 4. MY FEES VIEW -->
+      <section id="student-fees-view" class="view-section">
+        <h2>My Fee Payment Status</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Monthly tuition fee statuses recorded by the administration.</p>
+
+        <div id="student-fees-list-container">
+          <!-- Rendered by JS -->
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="bottom-nav no-print">
+      <div class="nav-item active" data-view="student-dashboard">
+        <i data-lucide="home"></i>
+        <span>Home</span>
+      </div>
+      <div class="nav-item" data-view="student-attendance">
+        <i data-lucide="calendar"></i>
+        <span>Attendance</span>
+      </div>
+      <div class="nav-item" data-view="student-marks">
+        <i data-lucide="file-text"></i>
+        <span>My Marks</span>
+      </div>
+      <div class="nav-item" data-view="student-fees">
+        <i data-lucide="credit-card"></i>
+        <span>Fees</span>
+      </div>
+    </nav>
+
+    <!-- Change Password Modal -->
+    <div class="modal" id="change-pass-modal">
+      <div class="modal-content modal-student-accent">
+        <div class="modal-header">
+          <h3>Change Password</h3>
+          <span class="modal-close" id="change-pass-modal-close"><i data-lucide="x"></i></span>
+        </div>
+        <form id="change-pass-form">
+          <div class="input-group">
+            <label for="old-pass-field">Current Password</label>
+            <input type="password" id="old-pass-field" class="input-field" required placeholder="Enter current password">
+          </div>
+          <div class="input-group">
+            <label for="new-pass-field">New Password</label>
+            <input type="password" id="new-pass-field" class="input-field" required placeholder="Enter new password">
+          </div>
+          <div class="input-group">
+            <label for="confirm-pass-field">Confirm New Password</label>
+            <input type="password" id="confirm-pass-field" class="input-field" required placeholder="Re-enter new password">
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <button type="button" class="btn btn-secondary" style="flex: 1;" id="change-pass-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary" style="flex: 1; background-color: var(--student-accent); border-color: var(--student-accent);">Update Password</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Toast Notifications Root -->
+    <div id="toast-container"></div>
+
+  </div>
+
+  <!-- Main Student App Controller -->
+  <script type="module" src="student.js"></script>
+
+</body>
+</html>

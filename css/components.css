@@ -412,3 +412,78 @@ input:checked + .slider::after {
   font-size: 0.75rem;
   color: var(--text-muted);
 }
+
+/* Split marks entry layout */
+.marks-split-row {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr 1fr 1fr 1.2fr;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.marks-split-header {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--border-color);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+
+.score-split-input {
+  width: 100%;
+  padding: 6px 10px;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.score-split-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: rgba(0,0,0,0.2);
+}
+
+/* Leave day styles */
+.leave-day-banner {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px dashed #f59e0b;
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #f59e0b;
+  font-size: 0.85rem;
+}
+
+/* Monthly report table styling */
+.monthly-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 14px;
+}
+
+.monthly-report-table th, .monthly-report-table td {
+  border: 1px solid var(--border-color);
+  padding: 10px;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.monthly-report-table th {
+  background-color: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.monthly-report-table tr:hover {
+  background-color: rgba(255, 255, 255, 0.01);
+}

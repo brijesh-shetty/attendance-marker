@@ -13,6 +13,7 @@ class AppController {
       students: document.getElementById("students-view"),
       attendance: document.getElementById("attendance-view"),
       tests: document.getElementById("tests-view"),
+      payments: document.getElementById("payments-view"),
       broadcast: document.getElementById("broadcast-view")
     };
 
@@ -116,6 +117,9 @@ class AppController {
       case "attendance":
         await this.loadAttendanceSetup();
         break;
+      case "payments":
+        await this.loadPaymentsList();
+        break;
       case "broadcast":
         document.getElementById("broadcast-message-input").value = "";
         break;
@@ -141,10 +145,17 @@ class AppController {
 
     const today = this.getLocalDateString();
     const records = await db.getAttendance(today);
-    const totalRecords = Object.keys(records).length;
-
+    
     const absenteesListDiv = document.getElementById("dashboard-absentees-list");
     absenteesListDiv.innerHTML = "";
+
+    if (records && records.__leaveDay === true) {
+      document.getElementById("stat-attendance-today").textContent = "Leave";
+      absenteesListDiv.innerHTML = `<p style="color: #f59e0b; font-weight: 500;">Today is marked as a Leave Day! 🗓️</p>`;
+      return;
+    }
+
+    const totalRecords = Object.keys(records).length;
 
     if (totalRecords > 0 && students.length > 0) {
       let presentCount = 0;
@@ -192,7 +203,10 @@ class AppController {
     container.innerHTML = "";
 
     const searchTerm = document.getElementById("student-search-input").value.toLowerCase();
-    const filtered = students.filter(s => s.name.toLowerCase().includes(searchTerm));
+    const filtered = students.filter(s => 
+      s.name.toLowerCase().includes(searchTerm) || 
+      s.id.toString().includes(searchTerm)
+    );
 
     if (filtered.length === 0) {
       container.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding: 20px;">No students found.</p>`;
@@ -207,9 +221,11 @@ class AppController {
         <div class="student-info" style="flex: 1;">
           <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <span class="student-name">${idx + 1}. ${student.name}</span>
+            <span class="badge" style="font-size: 0.7rem; background-color: rgba(59, 130, 246, 0.2); color: var(--student-accent-hover); padding: 2px 6px; border-radius: 4px; font-weight: 700;">ID: #${student.id}</span>
             ${student.combination ? `<span class="badge" style="font-size: 0.7rem; background-color: rgba(139, 92, 246, 0.15); color: var(--primary-hover); padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase;">${student.combination}</span>` : ''}
             ${student.college ? `<span class="badge" style="font-size: 0.7rem; background-color: rgba(255, 255, 255, 0.05); color: var(--text-muted); padding: 2px 6px; border-radius: 4px; font-weight: 500; text-transform: uppercase;">${student.college}</span>` : ''}
           </div>
+          <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 4px;">📲 Parent / Default Password: ${student.phone || student.parentPhone || 'N/A'}</span>
         </div>
         <button class="btn btn-secondary btn-icon-only view-details-btn" data-id="${student.id}" style="padding: 6px;">
           <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
@@ -252,7 +268,7 @@ class AppController {
 
   async handleStudentSubmit(e) {
     e.preventDefault();
-    const id = document.getElementById("student-id-field").value;
+    let id = document.getElementById("student-id-field").value;
     const name = document.getElementById("student-name-field").value.trim();
     const combination = document.getElementById("student-combination-field").value;
     const college = document.getElementById("student-college-field").value.trim();
@@ -261,12 +277,22 @@ class AppController {
 
     if (!name) return;
 
-    const studentData = { name, phone, parentPhone, combination, college };
-    if (id) studentData.id = id;
+    if (!id) {
+      // Auto-assign sequential integer ID starting from 1
+      const existingStudents = await db.getStudents();
+      let maxId = 0;
+      existingStudents.forEach(s => {
+        const parsed = parseInt(s.id, 10);
+        if (!isNaN(parsed) && parsed > maxId) maxId = parsed;
+      });
+      id = (maxId + 1).toString();
+    }
+
+    const studentData = { id, name, phone, parentPhone, combination, college };
 
     await db.saveStudent(studentData);
     document.getElementById("student-modal").classList.remove("active");
-    this.showToast(id ? "Student record updated." : "New student registered successfully!");
+    this.showToast(`Student #${id} saved successfully! Default password: ${phone || parentPhone || '123456'}`);
     this.loadStudentsList();
   }
 
@@ -287,8 +313,9 @@ class AppController {
   openStudentDetailsModal(studentId) {
     const modal = document.getElementById("student-details-modal");
     db.getStudents().then(students => {
-      const student = students.find(s => s.id === studentId);
+      const student = students.find(s => s.id.toString() === studentId.toString());
       if (student) {
+        document.getElementById("detail-student-id").textContent = `#${student.id}`;
         document.getElementById("detail-student-name").textContent = student.name;
         document.getElementById("detail-student-combination").textContent = student.combination || "N/A";
         document.getElementById("detail-student-college").textContent = student.college || "N/A";
@@ -297,6 +324,18 @@ class AppController {
         
         const editBtn = document.getElementById("detail-edit-btn");
         const deleteBtn = document.getElementById("detail-delete-btn");
+        const resetPassBtn = document.getElementById("reset-password-btn");
+
+        if (resetPassBtn) {
+          const newResetBtn = resetPassBtn.cloneNode(true);
+          resetPassBtn.parentNode.replaceChild(newResetBtn, resetPassBtn);
+          newResetBtn.addEventListener("click", async () => {
+            if (confirm(`Reset password for Student #${student.id} (${student.name}) to parent phone number (${student.phone || student.parentPhone || 'default'})?`)) {
+              const res = await db.resetStudentPassword(student.id);
+              this.showToast(res.message, "success");
+            }
+          });
+        }
         
         const newEditBtn = editBtn.cloneNode(true);
         const newDeleteBtn = deleteBtn.cloneNode(true);
@@ -331,15 +370,40 @@ class AppController {
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
     
-    const hasRecords = Object.keys(records).length > 0;
+    const isLeaveDay = records && records.__leaveDay === true;
+    const startBtn = document.getElementById("attendance-start-btn");
+    const leaveBtn = document.getElementById("attendance-leave-btn");
+    const unleaveBtn = document.getElementById("attendance-unleave-btn");
+    const leaveBanner = document.getElementById("attendance-leave-banner");
     const reportBox = document.getElementById("attendance-print-report");
-    
-    if (hasRecords) {
-      this.renderAttendancePrintPreview(dateVal, students, records);
-      reportBox.style.display = "block";
+
+    if (isLeaveDay) {
+      if (leaveBanner) leaveBanner.style.display = "flex";
+      if (startBtn) {
+        startBtn.disabled = true;
+        startBtn.innerHTML = `<i data-lucide="play"></i> Attendance Blocked (Leave Day)`;
+      }
+      if (leaveBtn) leaveBtn.style.display = "none";
+      if (unleaveBtn) unleaveBtn.style.display = "block";
+      if (reportBox) reportBox.style.display = "none";
     } else {
-      reportBox.style.display = "none";
+      if (leaveBanner) leaveBanner.style.display = "none";
+      if (startBtn) {
+        startBtn.disabled = false;
+        startBtn.innerHTML = `<i data-lucide="play"></i> Take / Edit Attendance`;
+      }
+      if (leaveBtn) leaveBtn.style.display = "block";
+      if (unleaveBtn) unleaveBtn.style.display = "none";
+
+      const hasRecords = Object.keys(records).length > 0;
+      if (hasRecords) {
+        this.renderAttendancePrintPreview(dateVal, students, records);
+        if (reportBox) reportBox.style.display = "block";
+      } else {
+        if (reportBox) reportBox.style.display = "none";
+      }
     }
+    lucide.createIcons();
   }
 
   async loadAttendanceList() {
@@ -395,6 +459,224 @@ class AppController {
     
     // Exit to setup panel
     await this.loadAttendanceSetup();
+  }
+
+  async handleMarkLeaveDay() {
+    const dateVal = document.getElementById("attendance-date-input").value;
+    if (!dateVal) return;
+    
+    if (confirm(`Are you sure you want to mark ${dateVal} as a Leave Day? Existing attendance for this day will be overwritten.`)) {
+      await db.saveAttendance(dateVal, { __leaveDay: true });
+      this.showToast(`Date ${dateVal} marked as a Leave Day.`);
+      await this.loadAttendanceSetup();
+      await this.loadDashboardData();
+    }
+  }
+
+  async handleUnmarkLeaveDay() {
+    const dateVal = document.getElementById("attendance-date-input").value;
+    if (!dateVal) return;
+    
+    if (confirm(`Are you sure you want to unmark ${dateVal} as a Leave Day?`)) {
+      await db.saveAttendance(dateVal, {});
+      this.showToast(`Leave day status removed for ${dateVal}.`);
+      await this.loadAttendanceSetup();
+      await this.loadDashboardData();
+    }
+  }
+
+  async loadMonthlyAttendanceReport() {
+    const monthSelect = document.getElementById("monthly-report-select");
+    if (!monthSelect) return;
+    const yearMonthStr = monthSelect.value; // YYYY-MM
+    const [year, month] = yearMonthStr.split("-").map(Number);
+
+    const students = await db.getStudents();
+    const allAttendance = await db.getAllAttendanceForMonth(year, month);
+
+    const reportResultsDiv = document.getElementById("monthly-report-results");
+    const tbody = document.getElementById("monthly-report-tbody");
+    
+    if (!tbody || !reportResultsDiv) return;
+
+    tbody.innerHTML = "";
+
+    // Count how many classes were held (excluding leave days)
+    let classesHeld = 0;
+    const validDates = [];
+
+    for (const [date, records] of Object.entries(allAttendance)) {
+      if (records && records.__leaveDay !== true) {
+        classesHeld++;
+        validDates.push(date);
+      }
+    }
+
+    if (students.length === 0) {
+      this.showToast("Please register students first.", "danger");
+      return;
+    }
+
+    if (classesHeld === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No classes conducted in this month yet.</td></tr>`;
+      reportResultsDiv.style.display = "block";
+      return;
+    }
+
+    // Calculate per student attendance stats
+    const reportData = [];
+    let sumPercentages = 0;
+
+    students.forEach((student, idx) => {
+      let attendedCount = 0;
+      validDates.forEach(date => {
+        const records = allAttendance[date] || {};
+        const status = records[student.id];
+        if (status === "P" || (status === undefined && Object.keys(records).length > 0)) {
+          attendedCount++;
+        }
+      });
+
+      const percentage = classesHeld > 0 ? Math.round((attendedCount / classesHeld) * 100) : 0;
+      sumPercentages += percentage;
+
+      reportData.push({
+        sNo: idx + 1,
+        name: student.name,
+        combination: student.combination || "",
+        totalHeld: classesHeld,
+        attended: attendedCount,
+        percentage: percentage
+      });
+    });
+
+    const classAverage = reportData.length > 0 ? Math.round(sumPercentages / reportData.length) : 0;
+
+    // Render summary rows
+    reportData.forEach(row => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td style="text-align: center;">${row.sNo}</td>
+        <td>
+          <strong>${row.name}</strong>
+          ${row.combination ? `<span class="badge" style="font-size: 0.7rem; background-color: rgba(139, 92, 246, 0.15); color: var(--primary-hover); padding: 2px 6px; border-radius: 4px; font-weight: 600; margin-left: 6px;">${row.combination}</span>` : ""}
+        </td>
+        <td style="text-align: center;">${row.totalHeld}</td>
+        <td style="text-align: center;">${row.attended}</td>
+        <td style="text-align: center; font-weight: bold; color: ${row.percentage < 75 ? 'var(--danger)' : 'var(--success)'};">${row.percentage}%</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Render footer average row
+    const footerTr = document.createElement("tr");
+    footerTr.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+    footerTr.style.fontWeight = "bold";
+    footerTr.innerHTML = `
+      <td colspan="2" style="text-align: right; padding-right: 15px;">Class Average:</td>
+      <td colspan="2" style="text-align: center;">${classesHeld} Days Conducted</td>
+      <td style="text-align: center; color: var(--primary-hover); font-size: 1rem;">${classAverage}%</td>
+    `;
+    tbody.appendChild(footerTr);
+
+    reportResultsDiv.style.display = "block";
+    lucide.createIcons();
+  }
+
+  async printMonthlyAttendanceReport() {
+    const monthSelect = document.getElementById("monthly-report-select");
+    if (!monthSelect) return;
+    const yearMonthStr = monthSelect.value;
+    const [year, month] = yearMonthStr.split("-").map(Number);
+    const monthName = monthSelect.options[monthSelect.selectedIndex].text;
+
+    const students = await db.getStudents();
+    const allAttendance = await db.getAllAttendanceForMonth(year, month);
+
+    let classesHeld = 0;
+    const validDates = [];
+    for (const [date, records] of Object.entries(allAttendance)) {
+      if (records && records.__leaveDay !== true) {
+        classesHeld++;
+        validDates.push(date);
+      }
+    }
+
+    if (classesHeld === 0) {
+      this.showToast("No classes to print for this month.", "info");
+      return;
+    }
+
+    const reportData = [];
+    let sumPercentages = 0;
+
+    students.forEach((student, idx) => {
+      let attendedCount = 0;
+      validDates.forEach(date => {
+        const records = allAttendance[date] || {};
+        const status = records[student.id];
+        if (status === "P" || (status === undefined && Object.keys(records).length > 0)) {
+          attendedCount++;
+        }
+      });
+      const percentage = classesHeld > 0 ? Math.round((attendedCount / classesHeld) * 100) : 0;
+      sumPercentages += percentage;
+      reportData.push({
+        sNo: idx + 1,
+        name: student.name,
+        combination: student.combination || "",
+        attended: attendedCount,
+        percentage: percentage
+      });
+    });
+
+    const classAverage = reportData.length > 0 ? Math.round(sumPercentages / reportData.length) : 0;
+
+    const printRoot = document.getElementById("print-sheet-root");
+    printRoot.innerHTML = `
+      <div class="print-header">
+        <h1>GALAXY ACADEMY</h1>
+        <p class="address">ABOVE PUNJAB NATIONAL BANK, NEAR MANGALA KALYANA MANTAPA,<br>KORAMANGALA, BANGALORE -95 &nbsp;|&nbsp; PH: 8088761586, 63043 00052</p>
+      </div>
+      <div class="print-meta">
+        <span>Report: <strong>Monthly Attendance Report</strong></span>
+        <span>Month: <strong>${monthName}</strong></span>
+        <span>Total Classes: <strong>${classesHeld}</strong></span>
+      </div>
+      <table class="print-table">
+        <thead>
+          <tr>
+            <th style="width: 60px;" class="text-center">S.No.</th>
+            <th>Student Name</th>
+            <th style="width: 100px;" class="text-center">Classes Held</th>
+            <th style="width: 100px;" class="text-center">Attended</th>
+            <th style="width: 100px;" class="text-center">Percentage</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${reportData.map(row => `
+            <tr>
+              <td class="text-center">${row.sNo}</td>
+              <td>
+                <strong>${row.name}</strong>
+                ${row.combination ? `<span style="font-size: 0.8rem; color: #555; margin-left: 8px;">(${row.combination})</span>` : ''}
+              </td>
+              <td class="text-center">${classesHeld}</td>
+              <td class="text-center">${row.attended}</td>
+              <td class="text-center" style="font-weight: bold;">${row.percentage}%</td>
+            </tr>
+          `).join('')}
+          <tr style="font-weight: bold; background-color: #f2f2f2 !important;">
+            <td colspan="2" style="text-align: right; padding-right: 20px;">Class Average:</td>
+            <td class="text-center">${classesHeld}</td>
+            <td class="text-center">-</td>
+            <td class="text-center" style="font-size: 11pt;">${classAverage}%</td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+
+    window.print();
   }
 
   async handleDownloadAbsentees() {
@@ -513,16 +795,6 @@ class AppController {
           }).join('')}
         </tbody>
       </table>
-      <div class="print-summary">
-        <p><strong>Total Students:</strong> ${students.length}</p>
-        <p><strong>Present Count:</strong> ${present}</p>
-        <p><strong>Absent Count:</strong> ${absent}</p>
-        <p><strong>List of Absentees:</strong> ${absentees.length > 0 ? absentees.join(", ") : 'None'}</p>
-      </div>
-      <div class="signature-area">
-        <div class="signature-line">Class Instructor Signature</div>
-        <div class="signature-line">Academy Director Stamp</div>
-      </div>
     `;
   }
 
@@ -559,68 +831,133 @@ class AppController {
       return;
     }
 
+    const meta = await db.getTestMetadata(this.selectedTest, this.selectedSubject);
+    const cetTotal = meta.cetTotal !== undefined ? meta.cetTotal : 25;
+    const theoryTotal = meta.theoryTotal !== undefined ? meta.theoryTotal : 25;
+    const sumTotal = cetTotal + theoryTotal;
+
+    // Update form header labels dynamically
+    const headerCet = document.getElementById("header-cet-label");
+    const headerTheory = document.getElementById("header-theory-label");
+    const headerTotal = document.getElementById("header-total-label");
+    if (headerCet) headerCet.textContent = `CET /${cetTotal}`;
+    if (headerTheory) headerTheory.textContent = `Theory /${theoryTotal}`;
+    if (headerTotal) headerTotal.textContent = `Total /${sumTotal}`;
+
     students.forEach((student, idx) => {
-      // Default score values: empty marks, checked present
-      const studentScoreData = scores[student.id] || { present: true, marks: "" };
+      const studentScoreData = scores[student.id] || { present: true, cetMarks: "", theoryMarks: "", totalMarks: "", marks: "" };
       const isPresent = studentScoreData.present !== false;
-      const marksVal = studentScoreData.marks;
+      
+      let cetVal = studentScoreData.cetMarks !== undefined ? studentScoreData.cetMarks : "";
+      let theoryVal = studentScoreData.theoryMarks !== undefined ? studentScoreData.theoryMarks : "";
+      let totalVal = studentScoreData.totalMarks !== undefined ? studentScoreData.totalMarks : (studentScoreData.marks || "");
 
       const div = document.createElement("div");
-      div.className = "score-entry-row";
+      div.className = "marks-split-row";
+      div.style.alignItems = "center";
       div.innerHTML = `
-        <div class="student-info">
-          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px;">
-            <span class="student-name">${idx + 1}. ${student.name}</span>
+        <div class="student-info" style="padding-left: 4px;">
+          <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+            <span class="student-name" style="font-weight: 600;">${idx + 1}. ${student.name}</span>
             ${student.combination ? `<span class="badge" style="font-size: 0.7rem; background-color: rgba(139, 92, 246, 0.15); color: var(--primary-hover); padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase;">${student.combination}</span>` : ''}
-            ${student.college ? `<span class="badge" style="font-size: 0.7rem; background-color: rgba(255, 255, 255, 0.05); color: var(--text-muted); padding: 2px 6px; border-radius: 4px; font-weight: 500; text-transform: uppercase;">${student.college}</span>` : ''}
           </div>
-          <span class="student-contact">📲 Parent 1: ${student.phone || 'N/A'}</span>
         </div>
-        <div class="score-controls">
+        <div style="display: flex; justify-content: center;">
           <label class="switch">
             <input type="checkbox" class="test-attendance-checkbox" data-id="${student.id}" ${isPresent ? "checked" : ""}>
             <span class="slider"></span>
           </label>
-          <input type="text" class="score-input test-marks-field" data-id="${student.id}" 
-                 value="${isPresent ? marksVal : 'AB'}" 
+        </div>
+        <div>
+          <input type="text" class="score-split-input test-cet-marks-field" data-id="${student.id}" 
+                 value="${isPresent ? cetVal : 'AB'}" 
                  placeholder="--" 
                  maxlength="3" 
                  ${isPresent ? "" : "disabled"}>
+        </div>
+        <div>
+          <input type="text" class="score-split-input test-theory-marks-field" data-id="${student.id}" 
+                 value="${isPresent ? theoryVal : 'AB'}" 
+                 placeholder="--" 
+                 maxlength="3" 
+                 ${isPresent ? "" : "disabled"}>
+        </div>
+        <div>
+          <input type="text" class="score-split-input test-total-marks-field" data-id="${student.id}" 
+                 value="${isPresent ? totalVal : 'AB'}" 
+                 placeholder="--" 
+                 disabled style="font-weight: bold; background-color: rgba(255, 255, 255, 0.05);">
         </div>
       `;
       container.appendChild(div);
     });
 
-    // Attach listeners to test attendance switches to disable/enable marks text field
+    const updateRowTotal = (studentId) => {
+      const cetInput = container.querySelector(`.test-cet-marks-field[data-id="${studentId}"]`);
+      const theoryInput = container.querySelector(`.test-theory-marks-field[data-id="${studentId}"]`);
+      const totalInput = container.querySelector(`.test-total-marks-field[data-id="${studentId}"]`);
+      
+      if (cetInput.disabled) {
+        totalInput.value = "AB";
+        return;
+      }
+      
+      const cet = parseFloat(cetInput.value.trim());
+      const theory = parseFloat(theoryInput.value.trim());
+      
+      let total = "";
+      if (!isNaN(cet) && !isNaN(theory)) {
+        total = cet + theory;
+      } else if (!isNaN(cet)) {
+        total = cet;
+      } else if (!isNaN(theory)) {
+        total = theory;
+      }
+      totalInput.value = total;
+    };
+
+    // Attach listeners to test attendance switches to disable/enable marks text fields
     container.querySelectorAll(".test-attendance-checkbox").forEach(box => {
       box.addEventListener("change", (e) => {
         const studentId = e.target.getAttribute("data-id");
-        const input = container.querySelector(`.test-marks-field[data-id="${studentId}"]`);
+        const cetInput = container.querySelector(`.test-cet-marks-field[data-id="${studentId}"]`);
+        const theoryInput = container.querySelector(`.test-theory-marks-field[data-id="${studentId}"]`);
+        const totalInput = container.querySelector(`.test-total-marks-field[data-id="${studentId}"]`);
         if (e.target.checked) {
-          input.disabled = false;
-          input.value = "";
+          cetInput.disabled = false;
+          theoryInput.disabled = false;
+          cetInput.value = "";
+          theoryInput.value = "";
+          totalInput.value = "";
         } else {
-          input.disabled = true;
-          input.value = "AB";
+          cetInput.disabled = true;
+          theoryInput.disabled = true;
+          cetInput.value = "AB";
+          theoryInput.value = "AB";
+          totalInput.value = "AB";
         }
         this.calculateAverageScoreBadge();
       });
     });
 
-    container.querySelectorAll(".test-marks-field").forEach(input => {
-      input.addEventListener("input", () => this.calculateAverageScoreBadge());
+    container.querySelectorAll(".test-cet-marks-field, .test-theory-marks-field").forEach(input => {
+      input.addEventListener("input", (e) => {
+        const studentId = e.target.getAttribute("data-id");
+        updateRowTotal(studentId);
+        this.calculateAverageScoreBadge();
+      });
     });
 
     this.calculateAverageScoreBadge();
   }
 
   calculateAverageScoreBadge() {
-    const markFields = document.querySelectorAll(".test-marks-field");
+    const totalFields = document.querySelectorAll(".test-total-marks-field");
     let totalScore = 0;
     let scoreCount = 0;
 
-    markFields.forEach(field => {
-      if (!field.disabled && field.value.trim() !== "") {
+    totalFields.forEach(field => {
+      if (field.value.trim() !== "" && field.value.trim() !== "AB") {
         const score = parseFloat(field.value.trim());
         if (!isNaN(score)) {
           totalScore += score;
@@ -640,27 +977,43 @@ class AppController {
   }
 
   async handleSaveTestMarks() {
-    const marksFields = document.querySelectorAll(".test-marks-field");
+    const students = await db.getStudents();
     const results = {};
+    const container = document.getElementById("test-students-list");
 
-    marksFields.forEach(field => {
-      const studentId = field.getAttribute("data-id");
-      const isPresent = !field.disabled;
-      const val = field.value.trim();
+    students.forEach(student => {
+      const checkbox = container.querySelector(`.test-attendance-checkbox[data-id="${student.id}"]`);
+      const cetInput = container.querySelector(`.test-cet-marks-field[data-id="${student.id}"]`);
+      const theoryInput = container.querySelector(`.test-theory-marks-field[data-id="${student.id}"]`);
+      const totalInput = container.querySelector(`.test-total-marks-field[data-id="${student.id}"]`);
+      
+      const isPresent = checkbox ? checkbox.checked : true;
+      const cetVal = cetInput ? cetInput.value.trim() : "";
+      const theoryVal = theoryInput ? theoryInput.value.trim() : "";
+      const totalVal = totalInput ? totalInput.value.trim() : "";
 
-      results[studentId] = {
+      results[student.id] = {
         present: isPresent,
-        marks: isPresent ? (val === "" ? "" : val) : "AB"
+        cetMarks: isPresent ? cetVal : "AB",
+        theoryMarks: isPresent ? theoryVal : "AB",
+        totalMarks: isPresent ? totalVal : "AB",
+        marks: isPresent ? totalVal : "AB"
       };
     });
 
     const type = document.getElementById("test-type-select").value;
     const num = document.getElementById("test-num-input").value.trim();
     const date = document.getElementById("test-date-input").value;
+    
+    const cetTotal = Number(document.getElementById("test-cet-total").value) || 25;
+    const theoryTotal = Number(document.getElementById("test-theory-total").value) || 25;
+
     const meta = {
       testType: type,
       testNumber: num,
-      date: date
+      date: date,
+      cetTotal: cetTotal,
+      theoryTotal: theoryTotal
     };
 
     await db.saveTestMarks(this.selectedTest, this.selectedSubject, results, meta);
@@ -684,17 +1037,25 @@ class AppController {
     const syllabus = await db.getSyllabus(this.selectedTest);
     const syllabusText = syllabus[this.selectedSubject] || "General Core Syllabus Modules";
 
+    const meta = await db.getTestMetadata(this.selectedTest, this.selectedSubject);
+    const cetTotal = meta.cetTotal !== undefined ? meta.cetTotal : 25;
+    const theoryTotal = meta.theoryTotal !== undefined ? meta.theoryTotal : 25;
+    const sumTotal = cetTotal + theoryTotal;
+
     let totalScore = 0;
     let scoreCount = 0;
     let highestScore = 0;
     const absentees = [];
 
     students.forEach(s => {
-      const data = scores[s.id] || { present: true, marks: "" };
-      if (data.present === false || data.marks === "AB") {
+      const data = scores[s.id] || { present: true, totalMarks: "", marks: "" };
+      const isPresent = data.present !== false;
+      const totalVal = data.totalMarks !== undefined ? data.totalMarks : data.marks;
+      
+      if (!isPresent || totalVal === "AB") {
         absentees.push(s.name);
-      } else if (data.marks !== "") {
-        const score = parseFloat(data.marks);
+      } else if (totalVal !== undefined && totalVal !== "") {
+        const score = parseFloat(totalVal);
         if (!isNaN(score)) {
           totalScore += score;
           scoreCount++;
@@ -709,7 +1070,7 @@ class AppController {
     printRoot.innerHTML = `
       <div class="print-header">
         <h1>GALAXY ACADEMY</h1>
-        <h2>Student Performance Marks Sheet</h2>
+        <p class="address">ABOVE PUNJAB NATIONAL BANK, NEAR MANGALA KALYANA MANTAPA,<br>KORAMANGALA, BANGALORE -95 &nbsp;|&nbsp; PH: 8088761586, 63043 00052</p>
       </div>
       <div class="print-meta">
         <span>Test Series: <strong>${this.selectedTest}</strong></span>
@@ -722,44 +1083,41 @@ class AppController {
       <table class="print-table">
         <thead>
           <tr>
-            <th style="width: 80px;" class="text-center">S.No.</th>
+            <th style="width: 60px;" class="text-center">S.No.</th>
             <th>Student Name</th>
-            <th style="width: 200px;" class="text-center">Marks Obtained</th>
+            <th style="width: 100px;" class="text-center">CET /${cetTotal}</th>
+            <th style="width: 100px;" class="text-center">Theory /${theoryTotal}</th>
+            <th style="width: 100px;" class="text-center">Total /${sumTotal}</th>
           </tr>
         </thead>
         <tbody>
           ${students.map((student, index) => {
-            const data = scores[student.id] || { present: true, marks: "" };
-            let displayVal = data.marks;
-            let statusClass = "";
-
-            if (data.present === false || data.marks === "AB") {
-              displayVal = "AB";
-              statusClass = "text-danger";
-            }
+            const data = scores[student.id] || { present: true, cetMarks: "", theoryMarks: "", totalMarks: "", marks: "" };
+            const isPresent = data.present !== false;
+            
+            let cetVal = isPresent ? (data.cetMarks !== undefined ? data.cetMarks : "") : "AB";
+            let theoryVal = isPresent ? (data.theoryMarks !== undefined ? data.theoryMarks : "") : "AB";
+            let totalVal = isPresent ? (data.totalMarks !== undefined ? data.totalMarks : (data.marks || "")) : "AB";
+            
+            const statusClass = !isPresent ? "text-danger" : "";
 
             return `
               <tr>
                 <td class="text-center">${index + 1}</td>
-                <td><strong>${student.name}</strong></td>
-                <td class="text-center ${statusClass}" style="font-weight: bold; font-size: 11pt;">
-                  ${displayVal}
+                <td>
+                  <strong>${student.name}</strong>
+                  ${student.combination ? `<span style="font-size: 0.8rem; color: #555; margin-left: 8px;">(${student.combination})</span>` : ''}
+                </td>
+                <td class="text-center ${statusClass}">${cetVal}</td>
+                <td class="text-center ${statusClass}">${theoryVal}</td>
+                <td class="text-center ${statusClass}" style="font-weight: bold;">
+                  ${totalVal}
                 </td>
               </tr>
             `;
           }).join('')}
         </tbody>
       </table>
-      <div class="print-summary">
-        <p><strong>Total Scored:</strong> ${scoreCount} Students</p>
-        <p><strong>Class Average Score:</strong> ${average}</p>
-        <p><strong>Highest Score:</strong> ${scoreCount > 0 ? highestScore : '-'}</p>
-        <p><strong>Absentees:</strong> ${absentees.length > 0 ? absentees.join(", ") : 'None'}</p>
-      </div>
-      <div class="signature-area">
-        <div class="signature-line">Class Instructor Signature</div>
-        <div class="signature-line">Academy Director Stamp</div>
-      </div>
     `;
 
     // Trigger printing dialog
@@ -820,6 +1178,7 @@ class AppController {
 
   async handleSendAbsenteesSMS() {
     const dateVal = document.getElementById("attendance-date-input").value;
+    const subjectVal = document.getElementById("attendance-subject-select").value;
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
     
@@ -835,40 +1194,51 @@ class AppController {
       return;
     }
 
-    if (!confirm(`Are you sure you want to send SMS notifications to the ${absentees.length} absent student(s)?\n(Note: If you are using a Twilio Trial Account, messages will only deliver to Verified Caller IDs)`)) {
+    if (!confirm(`Are you sure you want to send WhatsApp notifications to the ${absentees.length} absent student(s)?`)) {
       return;
     }
 
-    let successCount = 0;
-    let failCount = 0;
-    const formattedDate = new Date(dateVal).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    // Format date cleanly to DD/MM/YYYY
+    const dateObj = new Date(dateVal);
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const year = dateObj.getFullYear();
+    const formattedDate = `${day}/${month}/${year}`;
 
-    this.showToast(`Starting SMS broadcast to ${absentees.length} parents...`);
+    this.showToast(`Starting WhatsApp broadcast to ${absentees.length} parents...`);
 
-    for (const student of absentees) {
+    const absenteePayload = [];
+    absentees.forEach(student => {
       const phone = student.phone || student.parentPhone;
-      if (!phone) {
-        failCount++;
-        console.warn(`No phone number recorded for student: ${student.name}`);
-        continue;
+      if (phone) {
+        absenteePayload.push({
+          phone: phone,
+          studentName: student.name,
+          subject: subjectVal,
+          date: formattedDate
+        });
       }
+    });
 
-      const msg = `Dear Parent, your ward ${student.name} was ABSENT today (${formattedDate}) from Galaxy Academy.`;
-      
-      try {
-        await this.sendSMS(phone, msg);
-        successCount++;
-      } catch (err) {
-        failCount++;
-        console.error(`Failed to send SMS to ${student.name} (${phone}):`, err);
+    try {
+      const apiBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+      const response = await fetch(`${apiBase}/api/notifications/whatsapp-broadcast`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ absentees: absenteePayload })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        this.showToast(`Successfully sent ${data.total} WhatsApp notification(s)!`, "success");
+      } else {
+        throw new Error(data.error || 'Failed to send broadcast');
       }
-    }
-
-    if (successCount > 0) {
-      this.showToast(`Successfully sent ${successCount} SMS notification(s)!`, "success");
-    }
-    if (failCount > 0) {
-      this.showToast(`Failed to send ${failCount} SMS. Check logs.`, "danger");
+    } catch (err) {
+      console.error("Failed to send WhatsApp broadcast:", err);
+      this.showToast(`Failed to send WhatsApp notification. Check server console.`, "danger");
     }
   }
 
@@ -940,6 +1310,18 @@ class AppController {
     const syllabus = await db.getSyllabus(testId);
     
     document.getElementById("test-syllabus-input").value = syllabus[subject] || "";
+
+    // Load CET / Theory totals
+    const meta = await db.getTestMetadata(testId, subject);
+    const cetTotal = meta.cetTotal !== undefined ? meta.cetTotal : 25;
+    const theoryTotal = meta.theoryTotal !== undefined ? meta.theoryTotal : 25;
+    const cetTotalEl = document.getElementById("test-cet-total");
+    const theoryTotalEl = document.getElementById("test-theory-total");
+    const sumTotalEl = document.getElementById("test-sum-total");
+
+    if (cetTotalEl) cetTotalEl.value = cetTotal;
+    if (theoryTotalEl) theoryTotalEl.value = theoryTotal;
+    if (sumTotalEl) sumTotalEl.value = cetTotal + theoryTotal;
   }
 
   async loadPreviousTests() {
@@ -1000,6 +1382,66 @@ class AppController {
   }
 
   /* =========================================================================
+     PAYMENTS MANAGER
+     ========================================================================= */
+  async loadPaymentsList() {
+    const month = document.getElementById("payment-month-select").value;
+    const filter = document.getElementById("payment-filter-status").value;
+    const container = document.getElementById("payments-list-container");
+    container.innerHTML = "";
+
+    const students = await db.getStudents();
+
+    if (students.length === 0) {
+      container.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding: 20px;">No students registered.</p>`;
+      return;
+    }
+
+    const allPayments = await db.getPayments();
+
+    students.forEach((student, idx) => {
+      const studentPayments = allPayments[student.id] || {};
+      const currentPay = studentPayments[month] || { status: 'due', amount: '', notes: '' };
+
+      if (filter !== "all" && currentPay.status !== filter) {
+        return;
+      }
+
+      const div = document.createElement("div");
+      div.className = "card";
+      div.style.marginBottom = "10px";
+      div.style.padding = "14px";
+      div.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <span style="font-weight: 700; font-size: 0.95rem;">${idx + 1}. ${student.name}</span>
+            <span class="badge" style="font-size: 0.7rem; background-color: rgba(59, 130, 246, 0.2); color: var(--student-accent-hover); margin-left: 6px;">ID: #${student.id}</span>
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <select class="select-field pay-status-select" data-id="${student.id}" style="padding: 4px 8px; font-size: 0.8rem; width: auto;">
+              <option value="due" ${currentPay.status === 'due' ? 'selected' : ''}>🔴 DUE</option>
+              <option value="paid" ${currentPay.status === 'paid' ? 'selected' : ''}>✅ PAID</option>
+              <option value="partial" ${currentPay.status === 'partial' ? 'selected' : ''}>🟡 PARTIAL</option>
+            </select>
+          </div>
+        </div>
+      `;
+
+      div.querySelector(".pay-status-select").addEventListener("change", async (e) => {
+        const newStatus = e.target.value;
+        await db.savePayment(student.id, month, newStatus);
+        this.showToast(`Fee status for ${student.name} (${month}) updated to ${newStatus.toUpperCase()}`);
+      });
+
+      container.appendChild(div);
+    });
+
+    if (container.children.length === 0) {
+      container.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding: 16px;">No students match filter '${filter}'.</p>`;
+    }
+  }
+
+  /* =========================================================================
      PORTAL SETTINGS
      ========================================================================= */
   openSettingsModal() {
@@ -1010,10 +1452,6 @@ class AppController {
     document.getElementById("fb-auth-domain").value = settings.authDomain || "";
     document.getElementById("fb-project-id").value = settings.projectId || "";
     document.getElementById("fb-app-id").value = settings.appId || "";
-
-    document.getElementById("twilio-sid-field").value = settings.twilioSid || "";
-    document.getElementById("twilio-token-field").value = settings.twilioToken || "";
-    document.getElementById("twilio-phone-field").value = settings.twilioPhone || "";
  
     const fbFields = document.getElementById("firebase-config-fields");
     fbFields.style.display = settings.mode === "firebase" ? "block" : "none";
@@ -1029,10 +1467,6 @@ class AppController {
     const fbAuthDomain = document.getElementById("fb-auth-domain").value.trim();
     const fbProjectId = document.getElementById("fb-project-id").value.trim();
     const fbAppId = document.getElementById("fb-app-id").value.trim();
-
-    const twilioSid = document.getElementById("twilio-sid-field").value.trim();
-    const twilioToken = document.getElementById("twilio-token-field").value.trim();
-    const twilioPhone = document.getElementById("twilio-phone-field").value.trim();
  
     const currentSettings = db.getSettings();
     const newSettings = { 
@@ -1041,10 +1475,7 @@ class AppController {
       apiKey: fbApiKey, 
       authDomain: fbAuthDomain, 
       projectId: fbProjectId, 
-      appId: fbAppId,
-      twilioSid,
-      twilioToken,
-      twilioPhone
+      appId: fbAppId
     };
     
     // Save settings (triggers initFirebase)
@@ -1125,10 +1556,8 @@ class AppController {
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const inputVal = document.getElementById("login-passcode").value;
-      console.log(`[Login] Submit clicked. Input length: ${inputVal.length}`);
       try {
         const isValid = await db.verifyPasscode(inputVal);
-        console.log(`[Login] Validation result: ${isValid}`);
         if (isValid) {
           sessionStorage.setItem("ga_logged_in", "true");
           this.hideLoginScreen();
@@ -1219,6 +1648,20 @@ class AppController {
     });
     document.getElementById("save-attendance-btn").addEventListener("click", () => this.handleSaveAttendance());
     document.getElementById("download-absentees-btn").addEventListener("click", () => this.handleDownloadAbsentees());
+    
+    // Leave Day Handlers
+    const leaveBtn = document.getElementById("attendance-leave-btn");
+    if (leaveBtn) leaveBtn.addEventListener("click", () => this.handleMarkLeaveDay());
+    
+    const unleaveBtn = document.getElementById("attendance-unleave-btn");
+    if (unleaveBtn) unleaveBtn.addEventListener("click", () => this.handleUnmarkLeaveDay());
+
+    // Monthly Report Handlers
+    const genReportBtn = document.getElementById("generate-monthly-report-btn");
+    if (genReportBtn) genReportBtn.addEventListener("click", () => this.loadMonthlyAttendanceReport());
+
+    const printReportBtn = document.getElementById("print-monthly-report-btn");
+    if (printReportBtn) printReportBtn.addEventListener("click", () => this.printMonthlyAttendanceReport());
 
     // Test Series View Handlers
     document.getElementById("test-type-select").addEventListener("change", () => this.loadTestSyllabus());
@@ -1259,7 +1702,13 @@ class AppController {
     document.getElementById("save-test-marks-btn").addEventListener("click", () => this.handleSaveTestMarks());
     document.getElementById("print-test-sheet-btn").addEventListener("click", () => this.printMarksSheet());
 
-    // Twilio SMS View Handlers
+    // Payments View Handlers
+    const payMonth = document.getElementById("payment-month-select");
+    const payFilter = document.getElementById("payment-filter-status");
+    if (payMonth) payMonth.addEventListener("change", () => this.loadPaymentsList());
+    if (payFilter) payFilter.addEventListener("change", () => this.loadPaymentsList());
+
+    // Notification / Broadcast Handlers
     document.getElementById("send-absentees-sms-btn").addEventListener("click", () => this.handleSendAbsenteesSMS());
     document.getElementById("send-broadcast-btn").addEventListener("click", () => this.handleSendBroadcast());
   }
@@ -1269,6 +1718,7 @@ class AppController {
 const app = new AppController();
 window.app = app; // Expose globally for diagnostics and inline click handlers
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+  await db.ready; // Wait for Firebase config to load from server
   app.init();
 });

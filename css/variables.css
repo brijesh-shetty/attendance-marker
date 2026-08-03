@@ -28,6 +28,18 @@
   
   --transition-fast: 0.2s ease;
   --transition-normal: 0.3s ease;
+  
+  /* Student & Payment Status tokens */
+  --student-accent: #3b82f6;
+  --student-accent-hover: #60a5fa;
+  --student-accent-glow: rgba(59, 130, 246, 0.35);
+  
+  --status-paid: #10b981;
+  --status-paid-bg: rgba(16, 185, 129, 0.15);
+  --status-due: #ef4444;
+  --status-due-bg: rgba(239, 68, 68, 0.15);
+  --status-partial: #f59e0b;
+  --status-partial-bg: rgba(245, 158, 11, 0.15);
 }
 
 @media print {
