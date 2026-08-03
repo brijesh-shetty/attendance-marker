@@ -1225,7 +1225,8 @@ class AppController {
       const response = await fetch(`${apiBase}/api/notifications/whatsapp-broadcast`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-admin-passcode': db.config ? db.config.passcode : '1234'
         },
         body: JSON.stringify({ absentees: absenteePayload })
       });

@@ -33,6 +33,16 @@ app.get('/api/config/firebase', (req, res) => {
   });
 });
 
+// Admin Passcode Protection Middleware for Notification APIs
+app.use('/api/notifications', (req, res, next) => {
+  const passcodeHeader = req.headers['x-admin-passcode'];
+  const expectedPasscode = process.env.ADMIN_PASSCODE || '1234';
+  if (!passcodeHeader || passcodeHeader !== expectedPasscode) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or missing Admin Passcode header' });
+  }
+  next();
+});
+
 // Single Absentee WhatsApp Notification API
 app.post('/api/notifications/whatsapp-absentee', async (req, res) => {
   const { phone, studentName, date, contactNumber } = req.body;
