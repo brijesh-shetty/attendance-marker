@@ -24,7 +24,7 @@ class AppController {
     this.initEventListeners();
   }
 
-  init() {
+  async init() {
     // Set default date picker to today in India Standard Time
     const today = this.getLocalDateString();
     document.getElementById("attendance-date-input").value = today;
@@ -33,24 +33,25 @@ class AppController {
     // Initialize UI Components
     lucide.createIcons();
 
-    // Check session login state
-    if (this.isLoggedIn()) {
-      this.hideLoginScreen();
-      this.switchView("dashboard");
-    } else {
+    // The server, not browser storage, decides whether this is an admin session.
+    try {
+      const session = await db.getSession();
+      if (session.user?.role === "admin") {
+        this.hideLoginScreen();
+        await this.switchView("dashboard");
+      } else {
+        this.showLoginScreen();
+      }
+    } catch (error) {
       this.showLoginScreen();
     }
 
     // Register Service Worker for offline PWA support
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js')
+      navigator.serviceWorker.register('/sw.js')
         .then(reg => console.log('PWA Service Worker registered successfully:', reg.scope))
         .catch(err => console.error('PWA Service Worker registration failed:', err));
     }
-  }
-
-  isLoggedIn() {
-    return sessionStorage.getItem("ga_logged_in") === "true";
   }
 
   showLoginScreen() {
@@ -74,10 +75,13 @@ class AppController {
   showToast(message, type = "success") {
     const toast = document.createElement("div");
     toast.className = `toast ${type}`;
-    toast.innerHTML = `
-      <span>${message}</span>
-      <i data-lucide="x" style="width:16px; height:16px; cursor:pointer;" onclick="this.parentElement.remove()"></i>
-    `;
+    const text = document.createElement("span");
+    text.textContent = message;
+    const close = document.createElement("i");
+    close.setAttribute("data-lucide", "x");
+    close.style.cssText = "width:16px; height:16px; cursor:pointer;";
+    close.addEventListener("click", () => toast.remove());
+    toast.append(text, close);
     this.toastContainer.appendChild(toast);
     lucide.createIcons();
     
@@ -1029,7 +1033,7 @@ class AppController {
   }
 
   async printMarksSheet() {
-    // Sync current UI fields to Firestore/Storage first
+    // Persist current UI fields through the protected server API first.
     await this.handleSaveTestMarks();
 
     const students = await db.getStudents();
@@ -1124,58 +1128,6 @@ class AppController {
     window.print();
   }
 
-  /* =========================================================================
-     TWILIO SMS OPERATIONS
-     ========================================================================= */
-  async sendSMS(toNumber, messageText) {
-    const settings = db.getSettings();
-    const sid = settings.twilioSid;
-    const token = settings.twilioToken;
-    const fromNumber = settings.twilioPhone;
-
-    if (!sid || !token || !fromNumber) {
-      throw new Error("Twilio is not configured. Go to settings to set SID, Token, and Phone.");
-    }
-
-    // Format phone number to E.164 (ensure it starts with + and country code, e.g. +91 for India)
-    let formattedTo = toNumber.trim();
-    if (!formattedTo.startsWith("+")) {
-      formattedTo = formattedTo.replace(/^0+/, "");
-      if (formattedTo.length === 10) {
-        formattedTo = "+91" + formattedTo;
-      } else {
-        formattedTo = "+" + formattedTo;
-      }
-    }
-
-    const targetUrl = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
-    const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(targetUrl);
-    const authHeader = "Basic " + btoa(`${sid}:${token}`);
-
-    const response = await fetch(proxyUrl, {
-      method: "POST",
-      headers: {
-        "Authorization": authHeader,
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({
-        To: formattedTo,
-        From: fromNumber,
-        Body: messageText
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errObj;
-      try { errObj = JSON.parse(errorText); } catch(e) {}
-      const errMsg = errObj ? errObj.message : `HTTP error! Status: ${response.status}`;
-      throw new Error(errMsg);
-    }
-
-    return await response.json();
-  }
-
   async handleSendAbsenteesSMS() {
     const dateVal = document.getElementById("attendance-date-input").value;
     const subjectVal = document.getElementById("attendance-subject-select").value;
@@ -1221,12 +1173,11 @@ class AppController {
     });
 
     try {
-      const apiBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
-      const response = await fetch(`${apiBase}/api/notifications/whatsapp-broadcast`, {
+      const response = await fetch('/api/notifications/whatsapp-broadcast', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
-          'Content-Type': 'application/json',
-          'x-admin-passcode': db.config ? db.config.passcode : '1234'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ absentees: absenteePayload })
       });
@@ -1235,7 +1186,7 @@ class AppController {
       if (response.ok && data.success) {
         this.showToast(`Successfully sent ${data.total} WhatsApp notification(s)!`, "success");
       } else {
-        throw new Error(data.error || 'Failed to send broadcast');
+        throw new Error(data.message || 'Failed to send broadcast');
       }
     } catch (err) {
       console.error("Failed to send WhatsApp broadcast:", err);
@@ -1244,60 +1195,7 @@ class AppController {
   }
 
   async handleSendBroadcast() {
-    const target = document.getElementById("broadcast-subject-select").value;
-    const msgText = document.getElementById("broadcast-message-input").value.trim();
-
-    if (!msgText) {
-      this.showToast("Please enter an announcement message first.", "danger");
-      return;
-    }
-
-    const students = await db.getStudents();
-    let targets = [];
-
-    if (target === "all") {
-      targets = students;
-    } else {
-      targets = students.filter(s => s.combination && s.combination.toUpperCase() === target.toUpperCase());
-    }
-
-    if (targets.length === 0) {
-      this.showToast("No students found in the selected target class.", "info");
-      return;
-    }
-
-    if (!confirm(`Are you sure you want to send this broadcast SMS to all ${targets.length} parents?\n(Note: If you are using a Twilio Trial Account, messages will only deliver to Verified Caller IDs)`)) {
-      return;
-    }
-
-    let successCount = 0;
-    let failCount = 0;
-
-    this.showToast(`Sending broadcast to ${targets.length} parents...`);
-
-    for (const student of targets) {
-      const phone = student.phone || student.parentPhone;
-      if (!phone) {
-        failCount++;
-        continue;
-      }
-
-      try {
-        await this.sendSMS(phone, msgText);
-        successCount++;
-      } catch (err) {
-        failCount++;
-        console.error(`Failed to send broadcast to ${student.name} (${phone}):`, err);
-      }
-    }
-
-    if (successCount > 0) {
-      this.showToast(`Broadcast completed: ${successCount} sent successfully!`, "success");
-      document.getElementById("broadcast-message-input").value = "";
-    }
-    if (failCount > 0) {
-      this.showToast(`Failed to deliver ${failCount} messages.`, "danger");
-    }
+    this.showToast("General SMS broadcast is disabled until it is implemented as a protected server-side integration.", "info");
   }
 
   /* =========================================================================
@@ -1446,61 +1344,13 @@ class AppController {
      PORTAL SETTINGS
      ========================================================================= */
   openSettingsModal() {
-    const settings = db.getSettings();
-    document.getElementById("db-mode-select").value = settings.mode;
-    document.getElementById("settings-passcode-field").value = settings.passcode || "1234";
-    document.getElementById("fb-api-key").value = settings.apiKey || "";
-    document.getElementById("fb-auth-domain").value = settings.authDomain || "";
-    document.getElementById("fb-project-id").value = settings.projectId || "";
-    document.getElementById("fb-app-id").value = settings.appId || "";
- 
-    const fbFields = document.getElementById("firebase-config-fields");
-    fbFields.style.display = settings.mode === "firebase" ? "block" : "none";
- 
     document.getElementById("settings-modal").classList.add("active");
     lucide.createIcons();
   }
 
   async handleSaveSettings() {
-    const mode = document.getElementById("db-mode-select").value;
-    const passcode = document.getElementById("settings-passcode-field").value.trim();
-    const fbApiKey = document.getElementById("fb-api-key").value.trim();
-    const fbAuthDomain = document.getElementById("fb-auth-domain").value.trim();
-    const fbProjectId = document.getElementById("fb-project-id").value.trim();
-    const fbAppId = document.getElementById("fb-app-id").value.trim();
- 
-    const currentSettings = db.getSettings();
-    const newSettings = { 
-      mode, 
-      passcode: passcode || currentSettings.passcode || "1234",
-      apiKey: fbApiKey, 
-      authDomain: fbAuthDomain, 
-      projectId: fbProjectId, 
-      appId: fbAppId
-    };
-    
-    // Save settings (triggers initFirebase)
-    await db.saveSettings(newSettings);
-
     document.getElementById("settings-modal").classList.remove("active");
-    this.showToast("Settings saved successfully.");
-
-    if (mode === "firebase") {
-      if (fbApiKey && fbProjectId) {
-        this.showToast("Firebase loaded. Uploading offline updates to cloud...");
-        const syncResult = await db.pushLocalDataToCloud();
-        if (syncResult.success) {
-          this.showToast("Cloud sync completed. Data is now live!");
-        } else {
-          this.showToast(`Cloud connection configured. Using offline cache. Error: ${syncResult.error}`, "danger");
-        }
-      } else {
-        this.showToast("Please enter Firebase Credentials before selecting cloud sync.", "danger");
-      }
-    }
-
-    // Refresh active panel view
-    this.refreshViewData(this.currentView);
+    this.showToast("Server security settings are managed through Render environment variables.");
   }
 
   async handleDataExport() {
@@ -1524,20 +1374,18 @@ class AppController {
   handleDataImport(e) {
     const file = e.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
-    reader.onload = async (evt) => {
-      const success = await db.importJSON(evt.target.result);
-      if (success) {
-        this.showToast("Database successfully restored from backup!");
+    reader.onload = async event => {
+      try {
+        const result = await db.importJSON(event.target.result);
+        this.showToast(result.message || "Backup imported successfully.");
         this.refreshViewData(this.currentView);
         document.getElementById("settings-modal").classList.remove("active");
-      } else {
-        this.showToast("Restoration failed. Invalid backup file structure.", "danger");
+      } catch (error) {
+        this.showToast(error.message || "Backup import failed.", "danger");
       }
     };
     reader.readAsText(file);
-    // Reset file value
     e.target.value = "";
   }
 
@@ -1552,29 +1400,32 @@ class AppController {
         this.switchView(view);
       });
     });
+    document.getElementById("quick-attendance-btn").addEventListener("click", () => this.switchView("attendance"));
+    document.getElementById("quick-tests-btn").addEventListener("click", () => this.switchView("tests"));
+    document.getElementById("quick-payments-btn").addEventListener("click", () => this.switchView("payments"));
 
     // Login Screen Handlers
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const inputVal = document.getElementById("login-passcode").value;
       try {
-        const isValid = await db.verifyPasscode(inputVal);
-        if (isValid) {
-          sessionStorage.setItem("ga_logged_in", "true");
-          this.hideLoginScreen();
-          this.switchView("dashboard");
-          document.getElementById("login-passcode").value = "";
-          this.showToast("Login successful. Welcome admin!");
-        } else {
-          this.showToast("Incorrect passcode. Access Denied.", "danger");
-        }
+        await db.adminLogin(inputVal);
+        this.hideLoginScreen();
+        this.switchView("dashboard");
+        document.getElementById("login-passcode").value = "";
+        this.showToast("Login successful. Welcome admin!");
       } catch (err) {
         console.error("[Login] Error validating passcode:", err);
+        this.showToast(err.message || "Login failed.", "danger");
       }
     });
 
-    document.getElementById("lock-portal-btn").addEventListener("click", () => {
-      sessionStorage.removeItem("ga_logged_in");
+    document.getElementById("lock-portal-btn").addEventListener("click", async () => {
+      try {
+        await db.logout();
+      } catch (err) {
+        console.warn("Logout request failed:", err);
+      }
       this.showLoginScreen();
       this.showToast("Logged out & locked portal successfully.");
     });
@@ -1589,30 +1440,10 @@ class AppController {
     });
     document.getElementById("settings-save-btn").addEventListener("click", () => this.handleSaveSettings());
 
-    // Toggle Firebase inputs visibility on database select change
-    document.getElementById("db-mode-select").addEventListener("change", (e) => {
-      const fbFields = document.getElementById("firebase-config-fields");
-      fbFields.style.display = e.target.value === "firebase" ? "block" : "none";
-    });
-
     // Backup & Restore settings controls
     document.getElementById("export-backup-btn").addEventListener("click", () => this.handleDataExport());
-    document.getElementById("import-backup-trigger").addEventListener("click", () => {
-      document.getElementById("import-backup-file").click();
-    });
-    document.getElementById("import-backup-file").addEventListener("change", (e) => this.handleDataImport(e));
-    document.getElementById("seed-sheet-data-btn").addEventListener("click", async () => {
-      if (confirm("This will clear your current student database and load the 35 students from the Class Sheet. Do you want to proceed?")) {
-        try {
-          await db.seedStudentSheetData();
-          this.showToast("Student database successfully seeded from the sheet!");
-          this.refreshViewData(this.currentView);
-          document.getElementById("settings-modal").classList.remove("active");
-        } catch (e) {
-          this.showToast("Seeding failed.", "danger");
-        }
-      }
-    });
+    document.getElementById("import-backup-trigger").addEventListener("click", () => document.getElementById("import-backup-file").click());
+    document.getElementById("import-backup-file").addEventListener("change", event => this.handleDataImport(event));
 
     // Student CRUD modal triggers
     document.getElementById("add-student-trigger-btn").addEventListener("click", () => this.openStudentModal());
@@ -1717,9 +1548,8 @@ class AppController {
 
 // Instantiate and initialize the app
 const app = new AppController();
-window.app = app; // Expose globally for diagnostics and inline click handlers
 
 document.addEventListener("DOMContentLoaded", async () => {
-  await db.ready; // Wait for Firebase config to load from server
-  app.init();
+  await db.ready;
+  await app.init();
 });

@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// The web app no longer needs direct Firestore access. Firebase Admin on Render
+// bypasses these rules; every browser request must go through the protected API.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

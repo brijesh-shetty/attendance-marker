@@ -1,4 +1,4 @@
-const CACHE_NAME = 'galaxy-academy-cache-v6';
+const CACHE_NAME = 'galaxy-academy-cache-v7';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -47,11 +47,9 @@ self.addEventListener('fetch', (event) => {
   // Only cache GET requests
   if (event.request.method !== 'GET') return;
 
-  // Skip Firebase/Firestore and Twilio API endpoints
-  if (event.request.url.includes('firestore.googleapis.com') || 
-      event.request.url.includes('firebase') ||
-      event.request.url.includes('api.twilio.com') ||
-      event.request.url.includes('corsproxy.io')) {
+  // API responses can contain private student data. Never store them in the PWA cache.
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin === self.location.origin && requestUrl.pathname.startsWith('/api/')) {
     return;
   }
 
@@ -59,7 +57,7 @@ self.addEventListener('fetch', (event) => {
     fetch(event.request)
       .then((networkResponse) => {
         // If response is valid, clone and update cache
-        if (networkResponse && networkResponse.status === 200) {
+        if (networkResponse && networkResponse.status === 200 && networkResponse.headers.get('Cache-Control') !== 'no-store') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
@@ -81,4 +79,3 @@ self.addEventListener('fetch', (event) => {
       })
   );
 });
-

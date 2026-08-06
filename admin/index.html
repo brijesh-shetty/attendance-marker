@@ -23,15 +23,6 @@
   <link rel="manifest" href="../manifest.json">
   <meta name="theme-color" content="#8b5cf6">
   
-  <!-- Firebase JS SDK Config Mapping -->
-  <script type="importmap">
-    {
-      "imports": {
-        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
-        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"
-      }
-    }
-  </script>
 </head>
 <body>
 
@@ -43,10 +34,10 @@
         <h1 style="font-size: 1.6rem; font-weight: 800;">Galaxy Academy</h1>
       </div>
       <h2 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; text-align: center; color: var(--text-main);">Admin Login</h2>
-      <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; margin-bottom: 20px;">Please enter the passcode to access the portal.</p>
+      <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; margin-bottom: 20px;">Please enter your admin password to access the portal.</p>
       <form id="login-form">
         <div class="input-group">
-          <input type="password" id="login-passcode" class="input-field" placeholder="Enter Passcode" required style="text-align: center; font-size: 1.1rem; letter-spacing: 2px;">
+          <input type="password" id="login-passcode" class="input-field" placeholder="Enter Admin Password" required autocomplete="current-password" style="text-align: center; font-size: 1.1rem;">
         </div>
         <button type="submit" class="btn btn-primary btn-full" style="margin-top: 10px; font-weight: 700;">Login</button>
       </form>
@@ -109,13 +100,13 @@
             <span>Quick Actions</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 8px;">
-            <button class="btn btn-primary btn-full" onclick="app.switchView('attendance')">
+            <button class="btn btn-primary btn-full" id="quick-attendance-btn">
               <i data-lucide="check-square"></i> Mark Attendance
             </button>
-            <button class="btn btn-secondary btn-full" onclick="app.switchView('tests')">
+            <button class="btn btn-secondary btn-full" id="quick-tests-btn">
               <i data-lucide="clipboard-list"></i> Enter Test Marks
             </button>
-            <button class="btn btn-secondary btn-full" onclick="app.switchView('payments')">
+            <button class="btn btn-secondary btn-full" id="quick-payments-btn">
               <i data-lucide="credit-card"></i> Manage Fee Payments
             </button>
           </div>
@@ -419,7 +410,7 @@
       <!-- 6. BROADCAST ANNOUNCEMENTS VIEW -->
       <section id="broadcast-view" class="view-section">
         <h2>Broadcast Announcements</h2>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Send general SMS / Fast2SMS notifications to student parents.</p>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">General announcements are disabled until a protected server-side messaging provider is configured.</p>
 
         <div class="card">
           <div class="input-group">
@@ -437,8 +428,8 @@
             <textarea id="broadcast-message-input" class="textarea-field" rows="5" placeholder="Dear Parent, please note there will be a special test conducted this Sunday. - Galaxy Academy"></textarea>
           </div>
 
-          <button class="btn btn-primary btn-full" id="send-broadcast-btn">
-            <i data-lucide="send"></i> Send Announcement
+          <button class="btn btn-primary btn-full" id="send-broadcast-btn" disabled title="Server-side SMS integration required">
+            <i data-lucide="lock"></i> Server-side Messaging Required
           </button>
         </div>
       </section>
@@ -572,70 +563,27 @@
       </div>
     </div>
 
-    <!-- Settings / Firebase Config Modal -->
+    <!-- Settings Modal -->
     <div class="modal" id="settings-modal">
       <div class="modal-content">
         <div class="modal-header">
           <h3>Portal Settings</h3>
           <span class="modal-close" id="settings-modal-close"><i data-lucide="x"></i></span>
         </div>
-        
-        <div class="input-group">
-          <label for="db-mode-select">Database Mode</label>
-          <select id="db-mode-select" class="select-field">
-            <option value="local">Local Offline Storage</option>
-            <option value="firebase">Firebase Cloud Sync</option>
-          </select>
-        </div>
-
-        <div class="input-group">
-          <label for="settings-passcode-field">Admin Portal Passcode</label>
-          <input type="password" id="settings-passcode-field" class="input-field" placeholder="Default: 1234">
-        </div>
-
-        <div id="firebase-config-fields" style="display: none; border-top: 1px solid var(--border-color); padding-top: 14px;">
-          <h4 style="margin-bottom: 12px; font-size: 0.9rem; color: var(--primary-hover);">Firebase Credentials</h4>
-          <div class="input-group">
-            <label for="fb-api-key">API Key</label>
-            <input type="password" id="fb-api-key" class="input-field" placeholder="AIzaSy...">
-          </div>
-          <div class="input-group">
-            <label for="fb-auth-domain">Auth Domain</label>
-            <input type="text" id="fb-auth-domain" class="input-field" placeholder="galaxy-academy.firebaseapp.com">
-          </div>
-          <div class="input-group">
-            <label for="fb-project-id">Project ID</label>
-            <input type="text" id="fb-project-id" class="input-field" placeholder="galaxy-academy">
-          </div>
-          <div class="input-group">
-            <label for="fb-app-id">App ID</label>
-            <input type="text" id="fb-app-id" class="input-field" placeholder="1:123456789:web:abcd...">
-          </div>
-        </div>
-
-        <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 14px;">
-          <h4 style="margin-bottom: 12px; font-size: 0.9rem; color: var(--primary-hover);">Fast2SMS API Settings</h4>
-          <div class="input-group">
-            <label for="fast2sms-key-field">Fast2SMS API Key</label>
-            <input type="password" id="fast2sms-key-field" class="input-field" placeholder="API Key from Fast2SMS">
-          </div>
-        </div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Authentication, Firebase credentials, and messaging keys are managed only in Render environment variables. They are intentionally unavailable in this browser.</p>
 
         <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 14px;">
           <h4 style="margin-bottom: 8px; font-size: 0.9rem;">Backup & Recovery</h4>
-          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <div style="display: flex; gap: 8px;">
             <button class="btn btn-secondary" style="flex: 1; padding: 8px;" id="export-backup-btn">Export Data</button>
             <button class="btn btn-secondary" style="flex: 1; padding: 8px;" id="import-backup-trigger">Import Data</button>
           </div>
-          <button class="btn btn-secondary btn-full" style="padding: 8px; width: 100%; border-color: rgba(139, 92, 246, 0.4); color: var(--primary-hover);" id="seed-sheet-data-btn">
-            <i data-lucide="database-backup"></i> Reset & Load Student Sheet (IDs 1-35)
-          </button>
-          <input type="file" id="import-backup-file" style="display: none;" accept=".json">
+          <input type="file" id="import-backup-file" style="display: none;" accept="application/json,.json">
         </div>
 
         <div style="display: flex; gap: 10px; margin-top: 24px;">
           <button class="btn btn-secondary btn-full" id="settings-cancel-btn">Cancel</button>
-          <button class="btn btn-primary btn-full" id="settings-save-btn">Apply Settings</button>
+          <button class="btn btn-primary btn-full" id="settings-save-btn">Close</button>
         </div>
       </div>
     </div>
