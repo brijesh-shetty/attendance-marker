@@ -104,8 +104,9 @@ class DatabaseManager {
       testNumber: match.testNumber || '',
       date: match.date || '',
       cetTotal: match.cetTotal ?? 25,
-      theoryTotal: match.theoryTotal ?? 25
-    } : { testType: 'Test', testNumber: '', date: '', cetTotal: 25, theoryTotal: 25 };
+      theoryTotal: match.theoryTotal ?? 25,
+      sumTotal: match.sumTotal ?? ((match.cetTotal ?? 25) + (match.theoryTotal ?? 25))
+    } : { testType: 'Test', testNumber: '', date: '', cetTotal: 25, theoryTotal: 25, sumTotal: 50 };
   }
 
   async getAllTests() {
@@ -131,6 +132,27 @@ class DatabaseManager {
     return this.request('/admin/payments', {
       method: 'POST',
       body: JSON.stringify({ studentId, monthYear: monthYearStr, status, amount, notes })
+    });
+  }
+
+  async saveTotalFee(studentId, totalFee) {
+    return this.request(`/admin/payments/${encodeURIComponent(studentId)}/total-fee`, {
+      method: 'POST',
+      body: JSON.stringify({ totalFee })
+    });
+  }
+
+  async addPaymentTransaction(studentId, date, amount, note = '') {
+    return this.request(`/admin/payments/${encodeURIComponent(studentId)}/transactions`, {
+      method: 'POST',
+      body: JSON.stringify({ date, amount, note })
+    });
+  }
+
+  async updatePaymentTransaction(studentId, transactionIndex, date, amount, note = '') {
+    return this.request(`/admin/payments/${encodeURIComponent(studentId)}/transactions/${encodeURIComponent(transactionIndex)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ date, amount, note })
     });
   }
 
@@ -171,6 +193,22 @@ class DatabaseManager {
     return this.request('/auth/student/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword })
+    });
+  }
+
+  async getWhatsAppReplies(limit = 50) {
+    return (await this.request(`/admin/whatsapp-replies?limit=${limit}`)).replies;
+  }
+
+  async markReplyRead(replyId) {
+    return this.request(`/admin/whatsapp-replies/${encodeURIComponent(replyId)}/read`, {
+      method: 'PATCH'
+    });
+  }
+
+  async deleteReply(replyId) {
+    return this.request(`/admin/whatsapp-replies/${encodeURIComponent(replyId)}`, {
+      method: 'DELETE'
     });
   }
 }

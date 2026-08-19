@@ -14,7 +14,8 @@ class AppController {
       attendance: document.getElementById("attendance-view"),
       tests: document.getElementById("tests-view"),
       payments: document.getElementById("payments-view"),
-      broadcast: document.getElementById("broadcast-view")
+      broadcast: document.getElementById("broadcast-view"),
+      replies: document.getElementById("replies-view")
     };
 
     this.navItems = document.querySelectorAll(".bottom-nav .nav-item");
@@ -136,8 +137,91 @@ class AppController {
         await this.loadTestSyllabus();
         await this.loadPreviousTests();
         break;
+      case "replies":
+        await this.loadReplies();
+        break;
     }
     lucide.createIcons();
+  }
+
+  async loadPaymentsList() {
+    const container = document.getElementById('payments-list-container');
+    const detail = document.getElementById('payment-student-detail-container');
+    const [students, allPayments] = await Promise.all([db.getStudents(), db.getPayments()]);
+    const dueStudents = [];
+    const summaries = students.map((student, index) => {
+      const paymentData = allPayments[student.id] || {};
+      const totalFee = Number(paymentData.totalFee) || 50000;
+      const transactions = Array.isArray(paymentData.transactions) ? paymentData.transactions : [];
+      const paid = transactions.reduce((sum, transaction) => sum + (Number(transaction?.amount) || 0), 0);
+      const balance = Math.max(totalFee - paid, 0);
+      const item = { student, index, paymentData, transactions, totalFee, paid, balance };
+      if (balance > 0) dueStudents.push(item);
+      return item;
+    });
+    container.innerHTML = summaries.length ? '' : '<p style="text-align:center; color:var(--text-muted); padding:20px;">No students registered.</p>';
+    summaries.forEach(item => {
+      const state = this.getFeePaymentState(item.paid, item.totalFee);
+      const row = document.createElement('div');
+      row.setAttribute('role', 'button'); row.setAttribute('tabindex', '0'); row.setAttribute('aria-label', `Open fee details for ${item.student.name}`);
+      row.className = 'card';
+      row.style.cssText = `width:100%; text-align:left; margin-bottom:10px; padding:14px; cursor:pointer; color:inherit; border-left:4px solid ${state.color}; background:${state.background};`;
+      row.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px;"><div><strong>${item.index + 1}. ${this.escapeHtml(item.student.name)}</strong><span class="badge" style="font-size:.7rem; margin-left:6px;">ID: #${this.escapeHtml(item.student.id)}</span><div style="font-size:.75rem; color:var(--text-muted); margin-top:4px;">Tap to add a payment or view history</div></div><div style="text-align:right;"><div style="font-size:.68rem; color:${state.color}; font-weight:700;">${state.label}</div><strong style="display:block; color:${state.color}; font-size:1rem; margin-top:3px;">${item.balance > 0 ? `Due: ${this.formatCurrency(item.balance)}` : 'Paid in full'}</strong></div></div>`;
+      const openDetails = () => { this.showPaymentStudentDetail(item, detail); detail.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      row.addEventListener('click', openDetails);
+      row.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDetails(); } });
+      container.appendChild(row);
+    });
+    document.getElementById('bulk-fee-message-help').textContent = `${dueStudents.length} student(s) have an outstanding balance. Previews are copied for review; no WhatsApp messages are sent yet.`;
+    document.getElementById('copy-all-due-messages-btn').onclick = async () => {
+      const template = document.getElementById('bulk-fee-template-select').value;
+      const messages = dueStudents.map(item => this.buildFeeMessage(template, item.student, item)).join('\n\n---\n\n');
+      if (!messages) return this.showToast('There are no due messages to copy.', 'info');
+      try { await navigator.clipboard.writeText(messages); this.showToast(`${dueStudents.length} fee-message previews copied for review.`); }
+      catch { this.showToast('Unable to copy messages. Please try again.', 'danger'); }
+    };
+  }
+
+  getFeePaymentState(paid, totalFee) {
+    if (paid >= totalFee) return { label: 'FULLY PAID', color: 'var(--success)', background: 'rgba(34,197,94,.12)' };
+    if (paid < totalFee * 0.5) return { label: 'DUE', color: 'var(--danger)', background: 'rgba(239,68,68,.12)' };
+    return { label: 'PARTIALLY PAID', color: '#f59e0b', background: 'rgba(245,158,11,.12)' };
+  }
+
+  showPaymentStudentDetail(item, detail) {
+    const { student, paymentData, transactions, totalFee, paid, balance } = item;
+    const state = this.getFeePaymentState(paid, totalFee);
+    const history = transactions.map((transaction, index) => ({ transaction, index })).sort((a, b) => String(b.transaction.date || '').localeCompare(String(a.transaction.date || '')) || (Number(b.transaction.recordedAt) || 0) - (Number(a.transaction.recordedAt) || 0));
+    const historyHtml = history.length ? history.map(({ transaction, index }) => `<div style="display:grid; grid-template-columns:1fr auto; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color);"><div><strong style="font-size:.82rem;">${this.escapeHtml(transaction.date)}</strong>${transaction.note ? `<div style="font-size:.75rem; color:var(--text-muted); margin-top:2px;">${this.escapeHtml(transaction.note)}</div>` : ''}</div><div style="display:flex; align-items:center; gap:8px;"><strong style="color:var(--success);">${this.formatCurrency(transaction.amount)}</strong><button class="btn btn-secondary edit-payment-btn" data-index="${index}" style="padding:4px 7px; font-size:.72rem;">Edit</button></div></div>`).join('') : '<p style="color:var(--text-muted); font-size:.8rem; margin:8px 0 0;">No payments recorded yet.</p>';
+    detail.style.display = 'block';
+    detail.innerHTML = `<div class="card" style="padding:14px; border-left:4px solid ${state.color};"><div style="display:flex; justify-content:space-between; gap:8px;"><div><h3 style="margin:0; font-size:1rem;">${this.escapeHtml(student.name)}</h3><span style="font-size:.75rem; color:${state.color}; font-weight:700;">${state.label}</span></div><button class="btn btn-secondary close-fee-detail-btn" style="padding:5px 9px;">Close</button></div><div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-top:12px;"><div><small>Total fee</small><strong style="display:block;">${this.formatCurrency(totalFee)}</strong></div><div><small>Received fee</small><strong style="display:block; color:var(--success);">${this.formatCurrency(paid)}</strong></div><div><small>${balance > 0 ? 'Due' : 'Status'}</small><strong style="display:block; color:${state.color};">${balance > 0 ? this.formatCurrency(balance) : 'Paid in full'}</strong></div></div><div style="display:flex; gap:8px; margin-top:12px; align-items:end;"><div class="input-group" style="margin:0; flex:1;"><label>Total fee</label><input class="input-field detail-total-fee" type="number" min="0" step="0.01" value="${totalFee}"></div><button class="btn btn-secondary save-total-fee-btn" style="padding:9px 12px;">Save Total</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Add payment received</strong><div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;"><div class="input-group" style="margin:0;"><label>Payment date</label><input class="input-field detail-payment-date" type="date" value="${this.getLocalDateString()}"></div><div class="input-group" style="margin:0;"><label>Paid amount</label><input class="input-field detail-amount" type="number" min="0.01" step="0.01" placeholder="0.00"></div></div><div class="input-group" style="margin-top:8px;"><label>Note (optional)</label><input class="input-field detail-notes" maxlength="300" placeholder="e.g. UPI reference / instalment"></div><button class="btn btn-primary btn-full add-payment-btn" style="margin-top:8px;">Add Payment</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Payment history</strong>${historyHtml}<div class="payment-edit-container"></div></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:.85rem;">Parent Message Preview</strong><span style="font-size:.72rem; color:var(--text-muted);">${paymentData.lastFeeMessage ? `Last sent: ${this.escapeHtml(paymentData.lastFeeMessage.template || 'template')} · ${new Date(paymentData.lastFeeMessage.sentAt).toLocaleDateString('en-IN')}` : 'Not sent yet'}</span></div><select class="select-field detail-template" style="margin-top:8px;"><option value="balance_reminder">Balance reminder</option><option value="payment_thanks">Payment received / thank you</option><option value="fee_reminder">Fee reminder</option></select><div class="detail-preview" style="margin-top:8px; padding:9px; border-radius:7px; background:rgba(255,255,255,.04); font-size:.8rem; line-height:1.45;"></div><button class="btn btn-secondary btn-full copy-detail-message-btn" style="margin-top:8px;">Copy Preview for Review</button></div></div>`;
+    const totalInput = detail.querySelector('.detail-total-fee'); const template = detail.querySelector('.detail-template'); const preview = detail.querySelector('.detail-preview');
+    const render = () => { const newTotal = Number(totalInput.value) || 0; preview.textContent = this.buildFeeMessage(template.value, student, { totalFee: newTotal, paid, balance: Math.max(newTotal - paid, 0) }); };
+    [totalInput, template].forEach(control => control.addEventListener('input', render)); render();
+    detail.querySelectorAll('.edit-payment-btn').forEach(button => button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      const transaction = transactions[index];
+      const editContainer = detail.querySelector('.payment-edit-container');
+      editContainer.innerHTML = `<div class="card" style="margin-top:10px; padding:10px; border:1px solid var(--border-color);"><strong style="font-size:.82rem;">Edit payment entry</strong><div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;"><div class="input-group" style="margin:0;"><label>Date</label><input class="input-field edit-payment-date" type="date" value="${this.escapeHtml(transaction.date || '')}"></div><div class="input-group" style="margin:0;"><label>Paid amount</label><input class="input-field edit-payment-amount" type="number" min="0.01" step="0.01" value="${Number(transaction.amount) || ''}"></div></div><div class="input-group" style="margin-top:8px;"><label>Note</label><input class="input-field edit-payment-note" maxlength="300" value="${this.escapeHtml(transaction.note || '')}"></div><div style="display:flex; gap:8px; margin-top:8px;"><button class="btn btn-primary save-payment-edit-btn" style="flex:1; padding:8px;">Save Change</button><button class="btn btn-secondary cancel-payment-edit-btn" style="flex:1; padding:8px;">Cancel</button></div></div>`;
+      editContainer.querySelector('.cancel-payment-edit-btn').addEventListener('click', () => { editContainer.innerHTML = ''; });
+      editContainer.querySelector('.save-payment-edit-btn').addEventListener('click', async () => {
+        try {
+          const date = editContainer.querySelector('.edit-payment-date').value;
+          const amount = Number(editContainer.querySelector('.edit-payment-amount').value);
+          const note = editContainer.querySelector('.edit-payment-note').value.trim();
+          if (!date) throw new Error('Select the payment date.');
+          if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a valid paid amount.');
+          await db.updatePaymentTransaction(student.id, index, date, amount, note);
+          this.showToast(`Payment entry for ${student.name} updated.`);
+          detail.style.display = 'none';
+          await this.loadPaymentsList();
+        } catch (error) { this.showToast(error.message || 'Unable to update payment.', 'danger'); }
+      });
+    }));
+    detail.querySelector('.close-fee-detail-btn').addEventListener('click', () => { detail.style.display = 'none'; detail.innerHTML = ''; });
+    detail.querySelector('.save-total-fee-btn').addEventListener('click', async () => { try { const total = Number(totalInput.value); if (!Number.isFinite(total) || total < 0) throw new Error('Enter a valid total fee.'); await db.saveTotalFee(student.id, total); this.showToast(`Total fee for ${student.name} saved.`); detail.style.display = 'none'; await this.loadPaymentsList(); } catch (error) { this.showToast(error.message || 'Unable to save total fee.', 'danger'); } });
+    detail.querySelector('.add-payment-btn').addEventListener('click', async () => { try { const date = detail.querySelector('.detail-payment-date').value; const amount = Number(detail.querySelector('.detail-amount').value); const note = detail.querySelector('.detail-notes').value.trim(); if (!date) throw new Error('Select the payment date.'); if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a valid paid amount.'); await db.addPaymentTransaction(student.id, date, amount, note); this.showToast(`Payment added for ${student.name}.`); detail.style.display = 'none'; await this.loadPaymentsList(); } catch (error) { this.showToast(error.message || 'Unable to add payment.', 'danger'); } });
+    detail.querySelector('.copy-detail-message-btn').addEventListener('click', async () => { try { await navigator.clipboard.writeText(preview.textContent); this.showToast('Fee message copied. Review it before sending.'); } catch { this.showToast('Unable to copy the message.', 'danger'); } });
   }
 
   /* =========================================================================
@@ -372,6 +456,7 @@ class AppController {
     if (!dateVal) return;
 
     const students = await db.getStudents();
+    await this.populateReportStudentOptions(students);
     const records = await db.getAttendance(dateVal);
     
     const isLeaveDay = records && records.__leaveDay === true;
@@ -489,6 +574,55 @@ class AppController {
     }
   }
 
+  async populateReportStudentOptions(studentsList) {
+    const selectEl = document.getElementById("monthly-report-student-select");
+    const containerEl = document.getElementById("report-student-checkboxes-list");
+    if (!selectEl) return;
+
+    const students = studentsList || await db.getStudents();
+    const currentVal = selectEl.value;
+
+    selectEl.innerHTML = `
+      <option value="all">All Students</option>
+      <option value="multiple">-- Select Multiple Students --</option>
+    `;
+
+    if (containerEl) containerEl.innerHTML = "";
+
+    students.forEach(student => {
+      const opt = document.createElement("option");
+      opt.value = student.id;
+      opt.textContent = `${student.name} ${student.combination ? `(${student.combination})` : ''}`;
+      selectEl.appendChild(opt);
+
+      if (containerEl) {
+        const lbl = document.createElement("label");
+        lbl.style.cssText = "display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--text-main); cursor: pointer; background: rgba(255,255,255,0.03); padding: 6px 8px; border-radius: 4px; border: 1px solid var(--border-color);";
+        lbl.innerHTML = `
+          <input type="checkbox" class="report-student-cb" value="${student.id}" checked style="accent-color: var(--primary);">
+          <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${student.name}</span>
+        `;
+        containerEl.appendChild(lbl);
+      }
+    });
+
+    if (currentVal && Array.from(selectEl.options).some(o => o.value === currentVal)) {
+      selectEl.value = currentVal;
+    }
+  }
+
+  getSelectedStudentsForReport(students) {
+    const studentSelectVal = document.getElementById("monthly-report-student-select")?.value || "all";
+    if (studentSelectVal === "all") {
+      return students;
+    } else if (studentSelectVal === "multiple") {
+      const selectedIds = Array.from(document.querySelectorAll(".report-student-cb:checked")).map(cb => cb.value);
+      return students.filter(s => selectedIds.includes(s.id));
+    } else {
+      return students.filter(s => s.id === studentSelectVal);
+    }
+  }
+
   async loadMonthlyAttendanceReport() {
     const monthSelect = document.getElementById("monthly-report-select");
     if (!monthSelect) return;
@@ -496,6 +630,18 @@ class AppController {
     const [year, month] = yearMonthStr.split("-").map(Number);
 
     const students = await db.getStudents();
+    const targetStudents = this.getSelectedStudentsForReport(students);
+
+    if (students.length === 0) {
+      this.showToast("Please register students first.", "danger");
+      return;
+    }
+
+    if (targetStudents.length === 0) {
+      this.showToast("Please select at least one student for the report.", "danger");
+      return;
+    }
+
     const allAttendance = await db.getAllAttendanceForMonth(year, month);
 
     const reportResultsDiv = document.getElementById("monthly-report-results");
@@ -516,11 +662,6 @@ class AppController {
       }
     }
 
-    if (students.length === 0) {
-      this.showToast("Please register students first.", "danger");
-      return;
-    }
-
     if (classesHeld === 0) {
       tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No classes conducted in this month yet.</td></tr>`;
       reportResultsDiv.style.display = "block";
@@ -529,9 +670,8 @@ class AppController {
 
     // Calculate per student attendance stats
     const reportData = [];
-    let sumPercentages = 0;
 
-    students.forEach((student, idx) => {
+    targetStudents.forEach((student, idx) => {
       let attendedCount = 0;
       validDates.forEach(date => {
         const records = allAttendance[date] || {};
@@ -542,7 +682,6 @@ class AppController {
       });
 
       const percentage = classesHeld > 0 ? Math.round((attendedCount / classesHeld) * 100) : 0;
-      sumPercentages += percentage;
 
       reportData.push({
         sNo: idx + 1,
@@ -553,8 +692,6 @@ class AppController {
         percentage: percentage
       });
     });
-
-    const classAverage = reportData.length > 0 ? Math.round(sumPercentages / reportData.length) : 0;
 
     // Render summary rows
     reportData.forEach(row => {
@@ -572,17 +709,6 @@ class AppController {
       tbody.appendChild(tr);
     });
 
-    // Render footer average row
-    const footerTr = document.createElement("tr");
-    footerTr.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
-    footerTr.style.fontWeight = "bold";
-    footerTr.innerHTML = `
-      <td colspan="2" style="text-align: right; padding-right: 15px;">Class Average:</td>
-      <td colspan="2" style="text-align: center;">${classesHeld} Days Conducted</td>
-      <td style="text-align: center; color: var(--primary-hover); font-size: 1rem;">${classAverage}%</td>
-    `;
-    tbody.appendChild(footerTr);
-
     reportResultsDiv.style.display = "block";
     lucide.createIcons();
   }
@@ -595,6 +721,13 @@ class AppController {
     const monthName = monthSelect.options[monthSelect.selectedIndex].text;
 
     const students = await db.getStudents();
+    const targetStudents = this.getSelectedStudentsForReport(students);
+
+    if (targetStudents.length === 0) {
+      this.showToast("Please select at least one student to print.", "danger");
+      return;
+    }
+
     const allAttendance = await db.getAllAttendanceForMonth(year, month);
 
     let classesHeld = 0;
@@ -612,9 +745,8 @@ class AppController {
     }
 
     const reportData = [];
-    let sumPercentages = 0;
 
-    students.forEach((student, idx) => {
+    targetStudents.forEach((student, idx) => {
       let attendedCount = 0;
       validDates.forEach(date => {
         const records = allAttendance[date] || {};
@@ -624,7 +756,6 @@ class AppController {
         }
       });
       const percentage = classesHeld > 0 ? Math.round((attendedCount / classesHeld) * 100) : 0;
-      sumPercentages += percentage;
       reportData.push({
         sNo: idx + 1,
         name: student.name,
@@ -634,7 +765,9 @@ class AppController {
       });
     });
 
-    const classAverage = reportData.length > 0 ? Math.round(sumPercentages / reportData.length) : 0;
+    const filterSubtitle = targetStudents.length < students.length 
+      ? (targetStudents.length === 1 ? `Student: <strong>${targetStudents[0].name}</strong>` : `Filter: <strong>${targetStudents.length} Selected Students</strong>`)
+      : '';
 
     const printRoot = document.getElementById("print-sheet-root");
     printRoot.innerHTML = `
@@ -646,6 +779,7 @@ class AppController {
         <span>Report: <strong>Monthly Attendance Report</strong></span>
         <span>Month: <strong>${monthName}</strong></span>
         <span>Total Classes: <strong>${classesHeld}</strong></span>
+        ${filterSubtitle ? `<span>${filterSubtitle}</span>` : ''}
       </div>
       <table class="print-table">
         <thead>
@@ -670,12 +804,6 @@ class AppController {
               <td class="text-center" style="font-weight: bold;">${row.percentage}%</td>
             </tr>
           `).join('')}
-          <tr style="font-weight: bold; background-color: #f2f2f2 !important;">
-            <td colspan="2" style="text-align: right; padding-right: 20px;">Class Average:</td>
-            <td class="text-center">${classesHeld}</td>
-            <td class="text-center">-</td>
-            <td class="text-center" style="font-size: 11pt;">${classAverage}%</td>
-          </tr>
         </tbody>
       </table>
     `;
@@ -729,6 +857,297 @@ class AppController {
     } catch (e) {
       console.error(e);
       this.showToast("Failed to download absentees list.", "danger");
+    }
+  }
+
+  getSavedAdminNumbers() {
+    let saved = [];
+    try {
+      saved = JSON.parse(localStorage.getItem("admin_numbers") || "[]");
+    } catch(e) {
+      saved = [];
+    }
+    if (!Array.isArray(saved) || saved.length === 0) {
+      const oldPhone = localStorage.getItem("sir_phone_number");
+      if (oldPhone) {
+        saved = [{ id: "num_1", name: "Sir", phone: oldPhone }];
+        localStorage.setItem("admin_numbers", JSON.stringify(saved));
+      } else {
+        saved = [];
+      }
+    }
+    return saved;
+  }
+
+  saveAdminNumbersList(list) {
+    localStorage.setItem("admin_numbers", JSON.stringify(list));
+    if (list.length > 0) {
+      localStorage.setItem("sir_phone_number", list[0].phone);
+    }
+  }
+
+  renderSavedAdminChips() {
+    const container = document.getElementById("saved-admin-numbers-container");
+    if (!container) return;
+    container.innerHTML = "";
+
+    const list = this.getSavedAdminNumbers();
+    if (list.length === 0) {
+      container.innerHTML = `<span style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">No saved numbers yet. Enter name & phone above and click "+ Save Number".</span>`;
+      return;
+    }
+
+    const currentPhone = (document.getElementById("admin-phone-input").value || "").trim();
+
+    list.forEach(item => {
+      const chip = document.createElement("span");
+      const isSelected = item.phone === currentPhone;
+      chip.style.cssText = `display: inline-flex; align-items: center; gap: 6px; background: ${isSelected ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.08)'}; border: 1px solid ${isSelected ? 'var(--primary)' : 'rgba(255, 255, 255, 0.15)'}; border-radius: 16px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer; color: var(--text-main); transition: all 0.2s ease;`;
+      
+      chip.innerHTML = `
+        <span class="chip-select-btn" data-id="${item.id}"><strong>${item.name}</strong> (${item.phone})</span>
+        <span class="chip-remove-btn" data-id="${item.id}" title="Remove number" style="display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: rgba(239,68,68,0.25); color: var(--danger); font-size: 11px; font-weight: bold; line-height: 1; margin-left: 2px;">×</span>
+      `;
+
+      // Select handler
+      chip.querySelector(".chip-select-btn").addEventListener("click", () => {
+        document.getElementById("admin-name-input").value = item.name;
+        document.getElementById("admin-phone-input").value = item.phone;
+        this.renderSavedAdminChips();
+        this.updateAdminReportTemplate();
+      });
+
+      // Remove handler
+      chip.querySelector(".chip-remove-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        const updated = list.filter(num => num.id !== item.id);
+        this.saveAdminNumbersList(updated);
+        if (currentPhone === item.phone) {
+          document.getElementById("admin-phone-input").value = "";
+        }
+        this.renderSavedAdminChips();
+        this.showToast(`Removed ${item.name} (${item.phone})`, "info");
+      });
+
+      container.appendChild(chip);
+    });
+  }
+
+  saveCurrentAdminNumber() {
+    const nameVal = (document.getElementById("admin-name-input").value || "Anand Sir").trim();
+    const phoneVal = (document.getElementById("admin-phone-input").value || "").trim();
+
+    if (!phoneVal) {
+      this.showToast("Please enter a phone number to save.", "danger");
+      return;
+    }
+
+    const list = this.getSavedAdminNumbers();
+    const existingIndex = list.findIndex(item => item.phone === phoneVal);
+
+    if (existingIndex >= 0) {
+      list[existingIndex].name = nameVal;
+    } else {
+      list.push({
+        id: "num_" + Date.now(),
+        name: nameVal,
+        phone: phoneVal
+      });
+    }
+
+    this.saveAdminNumbersList(list);
+    this.renderSavedAdminChips();
+    this.showToast(`Saved ${nameVal} (${phoneVal})`, "success");
+  }
+
+  clearAdminInputs() {
+    document.getElementById("admin-phone-input").value = "";
+    document.getElementById("admin-name-input").value = "Anand Sir";
+    this.renderSavedAdminChips();
+    this.updateAdminReportTemplate();
+  }
+
+  async openSendToAdminModal() {
+    const dateVal = document.getElementById("attendance-date-input").value;
+    if (!dateVal) {
+      this.showToast("Please select an attendance date first.", "info");
+      return;
+    }
+
+    const modal = document.getElementById("send-admin-modal");
+    const phoneInput = document.getElementById("admin-phone-input");
+    const nameInput = document.getElementById("admin-name-input");
+    const mainSubjectEl = document.getElementById("attendance-subject-select");
+    const adminSubjectEl = document.getElementById("admin-subject-select");
+
+    if (mainSubjectEl && adminSubjectEl) {
+      adminSubjectEl.value = mainSubjectEl.value;
+    }
+    
+    // Load saved phone number if exists
+    const list = this.getSavedAdminNumbers();
+    if (list.length > 0 && !phoneInput.value) {
+      nameInput.value = list[0].name || "Anand Sir";
+      phoneInput.value = list[0].phone || "";
+    } else if (!nameInput.value) {
+      nameInput.value = "Anand Sir";
+    }
+
+    this.renderSavedAdminChips();
+    await this.updateAdminReportTemplate();
+
+    modal.classList.add("active");
+    if (window.lucide) lucide.createIcons();
+  }
+
+  async updateAdminReportTemplate() {
+    const dateVal = document.getElementById("attendance-date-input").value;
+    const adminSubjectEl = document.getElementById("admin-subject-select");
+    const mainSubjectEl = document.getElementById("attendance-subject-select");
+    const subjectVal = (adminSubjectEl && adminSubjectEl.value) || (mainSubjectEl && mainSubjectEl.value) || "Tuition";
+    
+    const adminNameVal = (document.getElementById("admin-name-input").value || "Anand Sir").trim();
+    
+    const students = await db.getStudents();
+    const records = await db.getAttendance(dateVal);
+
+    const [y, m, d] = dateVal.split("-");
+    const formattedDate = `${d}/${m}/${y}`;
+
+    let present = 0;
+    let absent = 0;
+    const absentees = [];
+
+    students.forEach(s => {
+      const status = records[s.id];
+      if (status === "A") {
+        absent++;
+        absentees.push(s);
+      } else if (status === "P") {
+        present++;
+      }
+    });
+
+    const greeting = "Good morning Sir";
+
+    const absenteeListText = absentees.length > 0
+      ? absentees.map((s, idx) => `${idx + 1}. ${s.name}`).join(", ")
+      : "None (All Present)";
+
+    const template = `${greeting}, the absentee students for today ${formattedDate} in ${subjectVal} class are: ${absenteeListText}. Total Absent: ${absent}. Regards, Galaxy Academy.`;
+
+    document.getElementById("admin-report-template").value = template;
+  }
+
+  handleCopyAdminReport() {
+    const text = document.getElementById("admin-report-template").value;
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      this.showToast("Report copied to clipboard! 📋", "success");
+    }).catch(err => {
+      console.error("Clipboard copy failed:", err);
+      this.showToast("Failed to copy report text.", "danger");
+    });
+  }
+
+  handleOpenWhatsAppAdmin() {
+    const phoneInput = document.getElementById("admin-phone-input");
+    const rawPhone = phoneInput.value.trim();
+    const text = document.getElementById("admin-report-template").value;
+
+    if (rawPhone) {
+      this.saveCurrentAdminNumber();
+    }
+
+    let cleanPhone = rawPhone.replace(/[^0-9]/g, "");
+    if (cleanPhone.length === 10) {
+      cleanPhone = "91" + cleanPhone;
+    }
+
+    const encodedText = encodeURIComponent(text);
+    const waUrl = cleanPhone 
+      ? `https://wa.me/${cleanPhone}?text=${encodedText}` 
+      : `https://api.whatsapp.com/send?text=${encodedText}`;
+
+    window.open(waUrl, "_blank");
+  }
+
+  async handleSendAdminAPI() {
+    const phoneInput = document.getElementById("admin-phone-input");
+    const rawPhone = phoneInput.value.trim();
+    const text = document.getElementById("admin-report-template").value;
+    const adminNameVal = (document.getElementById("admin-name-input").value || "Anand Sir").trim();
+    const templateNameVal = (document.getElementById("admin-template-name-input").value || "admin_absentee_alert").trim();
+
+    if (!rawPhone) {
+      this.showToast("Please enter Admin phone number.", "danger");
+      return;
+    }
+
+    if (!text) {
+      this.showToast("Report message is empty.", "danger");
+      return;
+    }
+
+    this.saveCurrentAdminNumber();
+
+    this.showToast("Sending absentee report to Admin via server API...");
+
+    const dateVal = document.getElementById("attendance-date-input").value;
+    const subjectEl = document.getElementById("attendance-subject-select");
+    const subjectVal = subjectEl ? subjectEl.value : "Tuition";
+    
+    const students = await db.getStudents();
+    const records = await db.getAttendance(dateVal);
+
+    const [y, m, d] = dateVal.split("-");
+    const formattedDate = `${d}/${m}/${y}`;
+
+    let present = 0;
+    let absent = 0;
+    const absentees = [];
+    students.forEach(s => {
+      if (records[s.id] === "A") {
+        absent++;
+        absentees.push(s.name);
+      } else if (records[s.id] === "P") {
+        present++;
+      }
+    });
+
+    try {
+      const response = await fetch('/api/notifications/alert-admin', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          phone: rawPhone,
+          message: text,
+          templateName: templateNameVal,
+          details: {
+            date: formattedDate,
+            subject: subjectVal,
+            absenteeList: absentees.length ? absentees.join(', ') : 'None',
+            total: students.length,
+            present: present,
+            absent: absent,
+            adminName: adminNameVal
+          }
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        this.showToast("✅ Absentee report sent to Admin successfully!", "success");
+        document.getElementById("send-admin-modal").classList.remove("active");
+      } else {
+        throw new Error(data.message || 'Failed to send alert');
+      }
+    } catch (err) {
+      console.error("Failed to send admin alert:", err);
+      this.showToast(`Failed: ${err.message}`, "danger");
     }
   }
 
@@ -890,7 +1309,8 @@ class AppController {
           <input type="text" class="score-split-input test-total-marks-field" data-id="${student.id}" 
                  value="${isPresent ? totalVal : 'AB'}" 
                  placeholder="--" 
-                 disabled style="font-weight: bold; background-color: rgba(255, 255, 255, 0.05);">
+                 maxlength="3" 
+                 ${isPresent ? "" : "disabled"} style="font-weight: bold;">
         </div>
       `;
       container.appendChild(div);
@@ -930,12 +1350,14 @@ class AppController {
         if (e.target.checked) {
           cetInput.disabled = false;
           theoryInput.disabled = false;
+          totalInput.disabled = false;
           cetInput.value = "";
           theoryInput.value = "";
           totalInput.value = "";
         } else {
           cetInput.disabled = true;
           theoryInput.disabled = true;
+          totalInput.disabled = true;
           cetInput.value = "AB";
           theoryInput.value = "AB";
           totalInput.value = "AB";
@@ -948,6 +1370,12 @@ class AppController {
       input.addEventListener("input", (e) => {
         const studentId = e.target.getAttribute("data-id");
         updateRowTotal(studentId);
+        this.calculateAverageScoreBadge();
+      });
+    });
+
+    container.querySelectorAll(".test-total-marks-field").forEach(input => {
+      input.addEventListener("input", () => {
         this.calculateAverageScoreBadge();
       });
     });
@@ -981,9 +1409,16 @@ class AppController {
   }
 
   async handleSaveTestMarks() {
+    const container = document.getElementById("test-students-list");
+    const checkboxes = container.querySelectorAll(".test-attendance-checkbox");
+
+    if (!checkboxes || checkboxes.length === 0) {
+      console.warn("Marks sheet is not active or loaded; skipping save to protect data.");
+      return;
+    }
+
     const students = await db.getStudents();
     const results = {};
-    const container = document.getElementById("test-students-list");
 
     students.forEach(student => {
       const checkbox = container.querySelector(`.test-attendance-checkbox[data-id="${student.id}"]`);
@@ -1011,13 +1446,15 @@ class AppController {
     
     const cetTotal = Number(document.getElementById("test-cet-total").value) || 25;
     const theoryTotal = Number(document.getElementById("test-theory-total").value) || 25;
+    const sumTotal = Number(document.getElementById("test-sum-total").value) || (cetTotal + theoryTotal);
 
     const meta = {
       testType: type,
       testNumber: num,
       date: date,
       cetTotal: cetTotal,
-      theoryTotal: theoryTotal
+      theoryTotal: theoryTotal,
+      sumTotal: sumTotal
     };
 
     await db.saveTestMarks(this.selectedTest, this.selectedSubject, results, meta);
@@ -1033,8 +1470,11 @@ class AppController {
   }
 
   async printMarksSheet() {
-    // Persist current UI fields through the protected server API first.
-    await this.handleSaveTestMarks();
+    // Only persist if sheet panel is currently open and rendered
+    const sheetPanel = document.getElementById("test-sheet-panel");
+    if (sheetPanel && sheetPanel.style.display !== "none") {
+      await this.handleSaveTestMarks();
+    }
 
     const students = await db.getStudents();
     const scores = await db.getTestMarks(this.selectedTest, this.selectedSubject);
@@ -1283,7 +1723,34 @@ class AppController {
   /* =========================================================================
      PAYMENTS MANAGER
      ========================================================================= */
-  async loadPaymentsList() {
+  formatCurrency(amount) {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 2
+    }).format(Number(amount) || 0);
+  }
+
+  escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    }[character]));
+  }
+
+  buildFeeMessage(template, student, totals) {
+    const name = student.name;
+    const paid = this.formatCurrency(totals.paid);
+    const balance = this.formatCurrency(totals.balance);
+    const totalFee = this.formatCurrency(totals.totalFee);
+    const templates = {
+      balance_reminder: `Dear Parent, this is a fee update for ${name}. Total tuition fee: ${totalFee}. Amount received: ${paid}. Outstanding balance: ${balance}. Please contact Galaxy Academy if you need any clarification.`,
+      payment_thanks: `Dear Parent, thank you for the fee payment for ${name}. Total tuition fee: ${totalFee}. Amount received so far: ${paid}. Remaining balance: ${balance}. Regards, Galaxy Academy.`,
+      fee_reminder: `Dear Parent, this is a fee reminder for ${name}. Amount received so far: ${paid}. Outstanding balance: ${balance}. Please make the payment at your convenience. Regards, Galaxy Academy.`
+    };
+    return templates[template] || templates.balance_reminder;
+  }
+
+  async loadPaymentsListLegacy() {
     const month = document.getElementById("payment-month-select").value;
     const filter = document.getElementById("payment-filter-status").value;
     const container = document.getElementById("payments-list-container");
@@ -1299,8 +1766,17 @@ class AppController {
     const allPayments = await db.getPayments();
 
     students.forEach((student, idx) => {
-      const studentPayments = allPayments[student.id] || {};
+      const paymentData = allPayments[student.id] || {};
+      // Supports existing payment documents while using the new fee summary shape.
+      const studentPayments = paymentData.records || paymentData;
       const currentPay = studentPayments[month] || { status: 'due', amount: '', notes: '' };
+      const totalFee = Number(paymentData.totalFee) || 50000;
+      const totalPaid = Object.values(studentPayments).reduce((sum, record) => {
+        if (!record || record.status === 'due') return sum;
+        const amount = Number(record.amount);
+        return sum + (Number.isFinite(amount) ? amount : 0);
+      }, 0);
+      const balance = Math.max(totalFee - totalPaid, 0);
 
       if (filter !== "all" && currentPay.status !== filter) {
         return;
@@ -1313,7 +1789,7 @@ class AppController {
       div.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
           <div>
-            <span style="font-weight: 700; font-size: 0.95rem;">${idx + 1}. ${student.name}</span>
+            <span style="font-weight: 700; font-size: 0.95rem;">${idx + 1}. ${this.escapeHtml(student.name)}</span>
             <span class="badge" style="font-size: 0.7rem; background-color: rgba(59, 130, 246, 0.2); color: var(--student-accent-hover); margin-left: 6px;">ID: #${student.id}</span>
           </div>
           <div style="display: flex; gap: 6px; align-items: center;">
@@ -1324,12 +1800,65 @@ class AppController {
             </select>
           </div>
         </div>
+        <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:8px; margin-top:12px;">
+          <div style="background:rgba(139,92,246,.08); padding:8px; border-radius:7px;"><div style="font-size:.7rem; color:var(--text-muted);">TOTAL FEE</div><strong class="fee-total-display">${this.formatCurrency(totalFee)}</strong></div>
+          <div style="background:rgba(34,197,94,.08); padding:8px; border-radius:7px;"><div style="font-size:.7rem; color:var(--text-muted);">PAID</div><strong class="fee-paid-display">${this.formatCurrency(totalPaid)}</strong></div>
+          <div style="background:rgba(239,68,68,.08); padding:8px; border-radius:7px;"><div style="font-size:.7rem; color:var(--text-muted);">BALANCE</div><strong class="fee-balance-display">${this.formatCurrency(balance)}</strong></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:12px;">
+          <div class="input-group" style="margin:0;"><label>Total fee for this student</label><input class="input-field fee-total-input" type="number" min="0" step="0.01" value="${totalFee}"></div>
+          <div class="input-group" style="margin:0;"><label>Payment received in ${this.escapeHtml(month)}</label><input class="input-field fee-amount-input" type="number" min="0" step="0.01" value="${this.escapeHtml(currentPay.amount || '')}" placeholder="0.00"></div>
+        </div>
+        <div class="input-group" style="margin:10px 0 0;"><label>Payment note (optional)</label><input class="input-field fee-notes-input" maxlength="300" value="${this.escapeHtml(currentPay.notes || '')}" placeholder="e.g. UPI reference / instalment"></div>
+        <button class="btn btn-secondary btn-full save-fee-btn" style="margin-top:10px; padding:8px;">Save Fee Details</button>
+        <div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;">
+          <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;"><strong style="font-size:.85rem;">Parent Message Preview</strong><span class="fee-message-status" style="font-size:.72rem; color:var(--text-muted);">${paymentData.lastFeeMessage ? `Last sent: ${this.escapeHtml(paymentData.lastFeeMessage.template || 'template')} · ${new Date(paymentData.lastFeeMessage.sentAt).toLocaleDateString('en-IN')}` : 'Not sent yet'}</span></div>
+          <select class="select-field fee-template-select" style="margin-top:8px; font-size:.82rem;"><option value="balance_reminder">Balance reminder</option><option value="payment_thanks">Payment received / thank you</option><option value="monthly_reminder">Monthly fee reminder</option></select>
+          <div class="fee-message-preview" style="margin-top:8px; padding:9px; border-radius:7px; background:rgba(255,255,255,.04); font-size:.8rem; line-height:1.45;"></div>
+          <div style="display:flex; gap:8px; margin-top:8px;"><button class="btn btn-secondary copy-fee-message-btn" style="flex:1; padding:8px;">Copy Preview</button><button class="btn btn-primary" style="flex:1; padding:8px;" disabled title="Enable only after Meta approves this message template">Send after template approval</button></div>
+        </div>
       `;
 
-      div.querySelector(".pay-status-select").addEventListener("change", async (e) => {
-        const newStatus = e.target.value;
-        await db.savePayment(student.id, month, newStatus);
-        this.showToast(`Fee status for ${student.name} (${month}) updated to ${newStatus.toUpperCase()}`);
+      const statusInput = div.querySelector(".pay-status-select");
+      const totalInput = div.querySelector(".fee-total-input");
+      const amountInput = div.querySelector(".fee-amount-input");
+      const notesInput = div.querySelector(".fee-notes-input");
+      const templateInput = div.querySelector(".fee-template-select");
+      const preview = div.querySelector(".fee-message-preview");
+      const totals = () => {
+        const updatedTotal = Number(totalInput.value) || 0;
+        const updatedMonthAmount = Number(amountInput.value) || 0;
+        const previousAmount = Number(currentPay.amount) || 0;
+        const updatedPaid = Math.max(0, totalPaid - previousAmount + updatedMonthAmount);
+        return { totalFee: updatedTotal, paid: updatedPaid, balance: Math.max(updatedTotal - updatedPaid, 0), month };
+      };
+      const renderPreview = () => { preview.textContent = this.buildFeeMessage(templateInput.value, student, totals()); };
+      templateInput.addEventListener('change', renderPreview);
+      totalInput.addEventListener('input', renderPreview);
+      amountInput.addEventListener('input', renderPreview);
+      renderPreview();
+
+      div.querySelector(".save-fee-btn").addEventListener("click", async () => {
+        try {
+          const newTotal = Number(totalInput.value);
+          const amount = amountInput.value.trim();
+          if (!Number.isFinite(newTotal) || newTotal < 0) throw new Error('Enter a valid total fee.');
+          await db.saveTotalFee(student.id, newTotal);
+          await db.savePayment(student.id, month, statusInput.value, amount, notesInput.value.trim());
+          this.showToast(`Fee details for ${student.name} saved.`);
+          await this.loadPaymentsList();
+        } catch (error) {
+          this.showToast(error.message || 'Unable to save fee details.', 'danger');
+        }
+      });
+
+      div.querySelector('.copy-fee-message-btn').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(preview.textContent);
+          this.showToast('Fee message copied. Review it before sending to the parent.');
+        } catch (error) {
+          this.showToast('Unable to copy the message. Please select and copy it manually.', 'danger');
+        }
       });
 
       container.appendChild(div);
@@ -1338,6 +1867,69 @@ class AppController {
     if (container.children.length === 0) {
       container.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding: 16px;">No students match filter '${filter}'.</p>`;
     }
+  }
+
+  async loadPaymentsListMonthlyLegacy() {
+    const month = document.getElementById("payment-month-select").value;
+    const filter = document.getElementById("payment-filter-status").value;
+    const container = document.getElementById("payments-list-container");
+    const detail = document.getElementById("payment-student-detail-container");
+    const [students, allPayments] = await Promise.all([db.getStudents(), db.getPayments()]);
+    const dueStudents = [];
+    const summaries = students.map((student, index) => {
+      const paymentData = allPayments[student.id] || {};
+      const records = paymentData.records || paymentData;
+      const current = records[month] || { status: 'due', amount: '', notes: '' };
+      const totalFee = Number(paymentData.totalFee) || 50000;
+      const paid = Object.values(records).reduce((sum, record) => sum + (record?.status === 'due' ? 0 : (Number(record?.amount) || 0)), 0);
+      const balance = Math.max(totalFee - paid, 0);
+      const summary = { student, index, paymentData, records, current, totalFee, paid, balance, month };
+      if (balance > 0) dueStudents.push(summary);
+      return summary;
+    });
+    const displayed = filter === 'due' ? dueStudents : summaries;
+    container.innerHTML = displayed.length ? '' : '<p style="text-align:center; color:var(--text-muted); padding:20px;">No students have an outstanding fee balance.</p>';
+    displayed.forEach(item => {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('aria-label', `Open fee details for ${item.student.name}`);
+      row.className = 'card';
+      row.style.cssText = 'width:100%; text-align:left; margin-bottom:10px; padding:14px; cursor:pointer; color:inherit;';
+      row.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px;"><div><strong>${item.index + 1}. ${this.escapeHtml(item.student.name)}</strong><span class="badge" style="font-size:.7rem; margin-left:6px;">ID: #${this.escapeHtml(item.student.id)}</span><div style="font-size:.75rem; color:var(--text-muted); margin-top:4px;">Tap to view fee details and message template</div></div><div style="text-align:right;"><div style="font-size:.7rem; color:var(--text-muted);">DUE AMOUNT</div><strong style="color:var(--danger); font-size:1rem;">${this.formatCurrency(item.balance)}</strong></div></div>`;
+      const openDetails = () => {
+        this.showPaymentStudentDetailMonthlyLegacy(item, detail);
+        detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+      row.addEventListener('click', openDetails);
+      row.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openDetails();
+        }
+      });
+      container.appendChild(row);
+    });
+    document.getElementById('bulk-fee-message-help').textContent = `${dueStudents.length} student(s) have an outstanding balance. Previews are copied for review; no WhatsApp messages are sent yet.`;
+    document.getElementById('copy-all-due-messages-btn').onclick = async () => {
+      const template = document.getElementById('bulk-fee-template-select').value;
+      const messages = dueStudents.map(item => this.buildFeeMessage(template, item.student, item)).join('\n\n---\n\n');
+      if (!messages) return this.showToast('There are no due messages to copy.', 'info');
+      try { await navigator.clipboard.writeText(messages); this.showToast(`${dueStudents.length} fee-message previews copied for review.`); }
+      catch { this.showToast('Unable to copy messages. Please try again.', 'danger'); }
+    };
+  }
+
+  showPaymentStudentDetailMonthlyLegacy(item, detail) {
+    const { student, paymentData, current, totalFee, paid, balance, month } = item;
+    detail.style.display = 'block';
+    detail.innerHTML = `<div class="card" style="padding:14px;"><div style="display:flex; justify-content:space-between; gap:8px;"><div><h3 style="margin:0; font-size:1rem;">${this.escapeHtml(student.name)}</h3><span style="font-size:.75rem; color:var(--text-muted);">Fee details for ${this.escapeHtml(month)}</span></div><button class="btn btn-secondary close-fee-detail-btn" style="padding:5px 9px;">Close</button></div><div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-top:12px;"><div><small>Total fee</small><strong style="display:block;">${this.formatCurrency(totalFee)}</strong></div><div><small>Paid</small><strong style="display:block; color:var(--success);">${this.formatCurrency(paid)}</strong></div><div><small>Balance</small><strong style="display:block; color:var(--danger);">${this.formatCurrency(balance)}</strong></div></div><div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px;"><div class="input-group" style="margin:0;"><label>Total fee</label><input class="input-field detail-total-fee" type="number" min="0" step="0.01" value="${totalFee}"></div><div class="input-group" style="margin:0;"><label>Received in ${this.escapeHtml(month)}</label><input class="input-field detail-amount" type="number" min="0" step="0.01" value="${this.escapeHtml(current.amount || '')}"></div></div><div class="input-group" style="margin-top:8px;"><label>Payment status</label><select class="select-field detail-status"><option value="due" ${current.status === 'due' ? 'selected' : ''}>Due</option><option value="partial" ${current.status === 'partial' ? 'selected' : ''}>Partial</option><option value="paid" ${current.status === 'paid' ? 'selected' : ''}>Paid</option></select></div><div class="input-group" style="margin-top:8px;"><label>Note</label><input class="input-field detail-notes" maxlength="300" value="${this.escapeHtml(current.notes || '')}"></div><button class="btn btn-primary btn-full save-detail-fee-btn" style="margin-top:8px;">Save Fee Details</button><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:.85rem;">Parent Message Preview</strong><span style="font-size:.72rem; color:var(--text-muted);">${paymentData.lastFeeMessage ? `Last sent: ${this.escapeHtml(paymentData.lastFeeMessage.template || 'template')} · ${new Date(paymentData.lastFeeMessage.sentAt).toLocaleDateString('en-IN')}` : 'Not sent yet'}</span></div><select class="select-field detail-template" style="margin-top:8px;"><option value="balance_reminder">Balance reminder</option><option value="payment_thanks">Payment received / thank you</option><option value="monthly_reminder">Monthly fee reminder</option></select><div class="detail-preview" style="margin-top:8px; padding:9px; border-radius:7px; background:rgba(255,255,255,.04); font-size:.8rem; line-height:1.45;"></div><button class="btn btn-secondary btn-full copy-detail-message-btn" style="margin-top:8px;">Copy Preview for Review</button></div></div>`;
+    const totalInput = detail.querySelector('.detail-total-fee'); const amountInput = detail.querySelector('.detail-amount'); const template = detail.querySelector('.detail-template'); const preview = detail.querySelector('.detail-preview');
+    const render = () => { const newTotal = Number(totalInput.value) || 0; const newPaid = Math.max(0, paid - (Number(current.amount) || 0) + (Number(amountInput.value) || 0)); preview.textContent = this.buildFeeMessage(template.value, student, { totalFee: newTotal, paid: newPaid, balance: Math.max(newTotal - newPaid, 0), month }); };
+    [totalInput, amountInput, template].forEach(control => control.addEventListener('input', render)); render();
+    detail.querySelector('.close-fee-detail-btn').addEventListener('click', () => { detail.style.display = 'none'; detail.innerHTML = ''; });
+    detail.querySelector('.save-detail-fee-btn').addEventListener('click', async () => { try { const total = Number(totalInput.value); if (!Number.isFinite(total) || total < 0) throw new Error('Enter a valid total fee.'); await db.saveTotalFee(student.id, total); await db.savePayment(student.id, month, detail.querySelector('.detail-status').value, amountInput.value.trim(), detail.querySelector('.detail-notes').value.trim()); this.showToast(`Fee details for ${student.name} saved.`); detail.style.display = 'none'; await this.loadPaymentsList(); } catch (error) { this.showToast(error.message || 'Unable to save fee details.', 'danger'); } });
+    detail.querySelector('.copy-detail-message-btn').addEventListener('click', async () => { try { await navigator.clipboard.writeText(preview.textContent); this.showToast('Fee message copied. Review it before sending.'); } catch { this.showToast('Unable to copy the message.', 'danger'); } });
   }
 
   /* =========================================================================
@@ -1481,6 +2073,79 @@ class AppController {
     document.getElementById("save-attendance-btn").addEventListener("click", () => this.handleSaveAttendance());
     document.getElementById("download-absentees-btn").addEventListener("click", () => this.handleDownloadAbsentees());
     
+    // Send to Admin (Sir) Handlers
+    const sendToAdminBtn = document.getElementById("send-to-admin-btn");
+    if (sendToAdminBtn) sendToAdminBtn.addEventListener("click", () => this.openSendToAdminModal());
+
+    const dashSendToAdminBtn = document.getElementById("dash-send-to-admin-btn");
+    if (dashSendToAdminBtn) {
+      dashSendToAdminBtn.addEventListener("click", () => {
+        const today = this.getLocalDateString();
+        const dateInput = document.getElementById("attendance-date-input");
+        if (dateInput) dateInput.value = today;
+        this.openSendToAdminModal();
+      });
+    }
+
+    const sendAdminModalClose = document.getElementById("send-admin-modal-close");
+    if (sendAdminModalClose) sendAdminModalClose.addEventListener("click", () => {
+      document.getElementById("send-admin-modal").classList.remove("active");
+    });
+
+    const copyAdminReportBtn = document.getElementById("copy-admin-report-btn");
+    if (copyAdminReportBtn) copyAdminReportBtn.addEventListener("click", () => this.handleCopyAdminReport());
+
+    const openWhatsAppAdminBtn = document.getElementById("open-whatsapp-admin-btn");
+    if (openWhatsAppAdminBtn) openWhatsAppAdminBtn.addEventListener("click", () => this.handleOpenWhatsAppAdmin());
+
+    const sendAdminApiBtn = document.getElementById("send-admin-api-btn");
+    if (sendAdminApiBtn) sendAdminApiBtn.addEventListener("click", () => this.handleSendAdminAPI());
+
+    const saveAdminNumBtn = document.getElementById("save-admin-number-btn");
+    if (saveAdminNumBtn) saveAdminNumBtn.addEventListener("click", () => this.saveCurrentAdminNumber());
+
+    const clearAdminNumBtn = document.getElementById("clear-admin-number-btn");
+    if (clearAdminNumBtn) clearAdminNumBtn.addEventListener("click", () => this.clearAdminInputs());
+
+    const adminNameInputEl = document.getElementById("admin-name-input");
+    if (adminNameInputEl) {
+      adminNameInputEl.addEventListener("input", () => {
+        if (document.getElementById("send-admin-modal").classList.contains("active")) {
+          this.updateAdminReportTemplate();
+        }
+      });
+    }
+
+    const subjectSelectEl = document.getElementById("attendance-subject-select");
+    if (subjectSelectEl) {
+      subjectSelectEl.addEventListener("change", () => {
+        const adminSub = document.getElementById("admin-subject-select");
+        if (adminSub) adminSub.value = subjectSelectEl.value;
+        if (document.getElementById("send-admin-modal").classList.contains("active")) {
+          this.updateAdminReportTemplate();
+        }
+      });
+    }
+
+    const adminSubjectSelectEl = document.getElementById("admin-subject-select");
+    if (adminSubjectSelectEl) {
+      adminSubjectSelectEl.addEventListener("change", () => {
+        const mainSub = document.getElementById("attendance-subject-select");
+        if (mainSub) mainSub.value = adminSubjectSelectEl.value;
+        if (document.getElementById("send-admin-modal").classList.contains("active")) {
+          this.updateAdminReportTemplate();
+        }
+      });
+    }
+
+    const resetAdminTemplateBtn = document.getElementById("reset-admin-template-btn");
+    if (resetAdminTemplateBtn) {
+      resetAdminTemplateBtn.addEventListener("click", () => {
+        this.updateAdminReportTemplate();
+        this.showToast("Report text reset to default template.", "info");
+      });
+    }
+    
     // Leave Day Handlers
     const leaveBtn = document.getElementById("attendance-leave-btn");
     if (leaveBtn) leaveBtn.addEventListener("click", () => this.handleMarkLeaveDay());
@@ -1489,6 +2154,32 @@ class AppController {
     if (unleaveBtn) unleaveBtn.addEventListener("click", () => this.handleUnmarkLeaveDay());
 
     // Monthly Report Handlers
+    const studentReportSelect = document.getElementById("monthly-report-student-select");
+    if (studentReportSelect) {
+      studentReportSelect.addEventListener("change", (e) => {
+        const container = document.getElementById("monthly-report-student-checkboxes-container");
+        if (container) {
+          container.style.display = e.target.value === "multiple" ? "block" : "none";
+        }
+      });
+    }
+
+    const selectAllBtn = document.getElementById("report-select-all-students");
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        document.querySelectorAll(".report-student-cb").forEach(cb => cb.checked = true);
+      });
+    }
+
+    const deselectAllBtn = document.getElementById("report-deselect-all-students");
+    if (deselectAllBtn) {
+      deselectAllBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        document.querySelectorAll(".report-student-cb").forEach(cb => cb.checked = false);
+      });
+    }
+
     const genReportBtn = document.getElementById("generate-monthly-report-btn");
     if (genReportBtn) genReportBtn.addEventListener("click", () => this.loadMonthlyAttendanceReport());
 
@@ -1543,6 +2234,113 @@ class AppController {
     // Notification / Broadcast Handlers
     document.getElementById("send-absentees-sms-btn").addEventListener("click", () => this.handleSendAbsenteesSMS());
     document.getElementById("send-broadcast-btn").addEventListener("click", () => this.handleSendBroadcast());
+
+    // WhatsApp Replies Handlers
+    const refreshRepliesBtn = document.getElementById("refresh-replies-btn");
+    if (refreshRepliesBtn) refreshRepliesBtn.addEventListener("click", () => this.loadReplies());
+  }
+
+  // ── WhatsApp Replies ──────────────────────────────
+  async loadReplies() {
+    const container = document.getElementById("replies-list-container");
+    const countEl = document.getElementById("replies-count");
+    container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:30px;"><i data-lucide="loader" style="animation:spin 1s linear infinite; width:18px; height:18px;"></i> Loading...</p>';
+    lucide.createIcons();
+
+    try {
+      const replies = await db.getWhatsAppReplies(100);
+      const unreadCount = replies.filter(r => !r.read).length;
+      countEl.textContent = replies.length
+        ? `${replies.length} message(s)${unreadCount ? ` · ${unreadCount} unread` : ''}`
+        : '';
+
+      if (!replies.length) {
+        container.innerHTML = `
+          <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
+            <i data-lucide="inbox" style="width:40px; height:40px; margin-bottom:10px; opacity:0.4;"></i>
+            <p style="font-size:0.9rem;">No parent replies yet.</p>
+            <p style="font-size:0.78rem; margin-top:6px;">Replies will appear here when parents respond to your WhatsApp notifications.</p>
+          </div>`;
+        lucide.createIcons();
+        return;
+      }
+
+      container.innerHTML = '';
+      replies.forEach(reply => {
+        const time = new Date(reply.receivedAt);
+        const timeStr = time.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
+        const isUnread = !reply.read;
+        const studentBadge = reply.matchedStudentName
+          ? `<span style="background:#25D366; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:600;">${reply.matchedStudentName}</span>`
+          : `<span style="background:var(--bg-secondary); color:var(--text-muted); padding:2px 8px; border-radius:10px; font-size:0.72rem;">Unknown contact</span>`;
+
+        const typeBadge = reply.messageType !== 'text'
+          ? `<span style="background:var(--bg-secondary); padding:2px 6px; border-radius:8px; font-size:0.68rem; color:var(--text-muted);">${reply.messageType}</span> `
+          : '';
+
+        const card = document.createElement('div');
+        card.style.cssText = `padding:14px 16px; border-bottom:1px solid var(--border); display:flex; gap:12px; align-items:flex-start; ${isUnread ? 'background: rgba(37, 211, 102, 0.05);' : ''}`;
+        card.innerHTML = `
+          <div style="width:36px; height:36px; border-radius:50%; background:${isUnread ? '#25D366' : 'var(--bg-secondary)'}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+            <i data-lucide="${isUnread ? 'message-circle' : 'message-square'}" style="width:16px; height:16px; color:${isUnread ? '#fff' : 'var(--text-muted)'};"></i>
+          </div>
+          <div style="flex:1; min-width:0;">
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:4px;">
+              <span style="font-weight:${isUnread ? '700' : '500'}; font-size:0.88rem;">${reply.profileName || 'Parent'}</span>
+              ${studentBadge}
+              ${typeBadge}
+            </div>
+            <p style="margin:2px 0 6px; font-size:0.84rem; color:var(--text-main); word-break:break-word; ${isUnread ? 'font-weight:500;' : ''}">${this.escapeHtml(reply.messageText)}</p>
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+              <span style="font-size:0.72rem; color:var(--text-muted);">${timeStr}</span>
+              <span style="font-size:0.72rem; color:var(--text-muted);">+${reply.from || reply.phone}</span>
+              ${isUnread ? `<button class="reply-mark-read-btn" data-id="${reply.id}" style="font-size:0.72rem; color:#25D366; background:none; border:none; cursor:pointer; padding:0; text-decoration:underline;">Mark read</button>` : ''}
+              <button class="reply-delete-btn" data-id="${reply.id}" style="font-size:0.72rem; color:var(--danger, #ef4444); background:none; border:none; cursor:pointer; padding:0; text-decoration:underline;">Delete</button>
+            </div>
+          </div>`;
+        container.appendChild(card);
+      });
+
+      // Attach mark-read handlers
+      container.querySelectorAll('.reply-mark-read-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const id = e.target.dataset.id;
+          try {
+            await db.markReplyRead(id);
+            this.showToast('Marked as read.', 'success');
+            await this.loadReplies();
+          } catch (err) {
+            this.showToast('Failed to mark as read.', 'danger');
+          }
+        });
+      });
+
+      // Attach delete handlers
+      container.querySelectorAll('.reply-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const id = e.target.dataset.id;
+          if (!confirm('Delete this reply?')) return;
+          try {
+            await db.deleteReply(id);
+            this.showToast('Reply deleted.', 'success');
+            await this.loadReplies();
+          } catch (err) {
+            this.showToast('Failed to delete reply.', 'danger');
+          }
+        });
+      });
+
+      lucide.createIcons();
+    } catch (err) {
+      container.innerHTML = `<p style="text-align:center; color:var(--danger, #ef4444); padding:30px;">Failed to load replies. ${err.message || ''}</p>`;
+      console.error('Failed to load WhatsApp replies:', err);
+    }
+  }
+
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
   }
 }
 

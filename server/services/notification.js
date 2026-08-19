@@ -145,6 +145,85 @@ class NotificationService {
     }
     return results;
   }
+
+  /**
+   * Send direct absentee alert to Admin / Sir
+   * @param {string} phoneNumber Admin phone number
+   * @param {string|object} data Message text string or structured object
+   */
+  async sendAdminAlert(phoneNumber, data) {
+    if (this.provider === 'fast2sms') {
+      const message = typeof data === 'string' ? data : data.text || '';
+      return await this.sendViaFast2SMS(phoneNumber, message);
+    }
+
+    const waToken = process.env.WHATSAPP_TOKEN;
+    const waPhoneId = process.env.WHATSAPP_PHONE_ID;
+    const templateName = (typeof data === 'object' && data.templateName)
+      ? data.templateName
+      : (process.env.WHATSAPP_ADMIN_TEMPLATE || 'admin_absentee_alert');
+
+    if (!waToken || !waPhoneId) {
+      const message = typeof data === 'string' ? data : data.text || '';
+      if (this.fast2smsKey) {
+        return await this.sendViaFast2SMS(phoneNumber, message);
+      }
+      console.log(`[Notification Stub] Alert Admin to: ${phoneNumber}\nTemplate: ${templateName}\nMessage:\n${message}`);
+      return { success: true, message: "Stubbed send success" };
+    }
+
+    let cleanPhone = (phoneNumber || '').replace(/[^0-9]/g, '');
+    if (cleanPhone.length === 10) cleanPhone = '91' + cleanPhone;
+
+    const url = `https://graph.facebook.com/v20.0/${waPhoneId}/messages`;
+    
+    let payload;
+    if (typeof data === 'object' && data.date) {
+      payload = {
+        messaging_product: 'whatsapp',
+        to: cleanPhone,
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: 'en' },
+          components: [
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', text: data.date },         // {{1}} Date
+                { type: 'text', text: data.subject },      // {{2}} Subject
+                { type: 'text', text: data.absenteeList }, // {{3}} Absentee List
+                { type: 'text', text: String(data.absent) } // {{4}} Total Absent
+              ]
+            }
+          ]
+        }
+      };
+    } else {
+      payload = {
+        messaging_product: 'whatsapp',
+        to: cleanPhone,
+        type: 'text',
+        text: { body: typeof data === 'string' ? data : data.text }
+      };
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${waToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      const resData = await response.json();
+      return { success: response.ok && Boolean(resData.messages), data: resData };
+    } catch (err) {
+      console.error("Admin WhatsApp alert failed:", err);
+      return { success: false, error: err.message };
+    }
+  }
 }
 
 module.exports = new NotificationService();

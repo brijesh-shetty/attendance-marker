@@ -247,12 +247,16 @@ function normalizeResults(results) {
 }
 
 function normalizeMetadata(metadata = {}) {
+  const cet = Number.isFinite(Number(metadata.cetTotal)) ? Number(metadata.cetTotal) : 25;
+  const theory = Number.isFinite(Number(metadata.theoryTotal)) ? Number(metadata.theoryTotal) : 25;
+  const sum = Number.isFinite(Number(metadata.sumTotal)) ? Number(metadata.sumTotal) : (cet + theory);
   return {
     testType: text(metadata.testType, 'Test type', { max: 30 }) || 'Test',
     testNumber: text(metadata.testNumber, 'Test number', { max: 30 }),
     date: metadata.date ? dateValue(metadata.date) : '',
-    cetTotal: Number.isFinite(Number(metadata.cetTotal)) ? Number(metadata.cetTotal) : 25,
-    theoryTotal: Number.isFinite(Number(metadata.theoryTotal)) ? Number(metadata.theoryTotal) : 25
+    cetTotal: cet,
+    theoryTotal: theory,
+    sumTotal: sum
   };
 }
 
@@ -632,7 +636,15 @@ app.get('/api/admin/payments', requireAdmin, async (req, res) => {
     const db = getFirestore();
     const snapshot = await db.collection('payments').get();
     const payments = {};
-    snapshot.forEach(item => { payments[item.id] = item.data().records || {}; });
+    snapshot.forEach(item => {
+      const data = item.data();
+      payments[item.id] = {
+        totalFee: Number(data.totalFee) || 50000,
+        records: data.records || {},
+        transactions: Array.isArray(data.transactions) ? data.transactions : [],
+        lastFeeMessage: data.lastFeeMessage || null
+      };
+    });
     return res.json({ payments });
   } catch (error) {
     return firebaseError(res, error);
@@ -646,15 +658,92 @@ app.post('/api/admin/payments', requireSameOrigin, requireAdmin, async (req, res
     const status = text(req.body.status, 'Payment status', { required: true, max: 10 });
     if (!['paid', 'due', 'partial'].includes(status)) throw new Error('Payment status is invalid.');
     const amount = text(req.body.amount, 'Amount', { max: 20 });
+    if (amount && (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) < 0 || Number(amount) > 10000000)) {
+      throw new Error('Amount must be a valid non-negative number.');
+    }
     const notes = text(req.body.notes, 'Notes', { max: 1000 });
     const db = getFirestore();
     const ref = db.collection('payments').doc(studentId);
     const snapshot = await ref.get();
-    const records = snapshot.exists ? (snapshot.data().records || {}) : {};
+    const existing = snapshot.exists ? snapshot.data() : {};
+    const records = existing.records || {};
     records[monthYear] = { status, amount, notes, updatedAt: Date.now() };
-    await ref.set({ studentId, records });
+    await ref.set({ studentId, records, totalFee: Number(existing.totalFee) || 50000 }, { merge: true });
     await writeAudit(req, 'payment.saved', studentId);
     return res.json({ payment: records[monthYear] });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.post('/api/admin/payments/:studentId/total-fee', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const totalFee = Number(req.body.totalFee);
+    if (!Number.isFinite(totalFee) || totalFee < 0 || totalFee > 10000000) {
+      throw new Error('Total fee must be a valid non-negative amount.');
+    }
+    const db = getFirestore();
+    await db.collection('payments').doc(studentId).set({ studentId, totalFee, updatedAt: Date.now() }, { merge: true });
+    await writeAudit(req, 'payment.total_fee_saved', studentId);
+    return res.json({ totalFee });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.post('/api/admin/payments/:studentId/transactions', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const date = dateValue(req.body.date);
+    const amount = Number(req.body.amount);
+    const note = text(req.body.note, 'Payment note', { max: 300 });
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 10000000) {
+      throw new Error('Paid amount must be greater than zero.');
+    }
+    const db = getFirestore();
+    const ref = db.collection('payments').doc(studentId);
+    const snapshot = await ref.get();
+    const existing = snapshot.exists ? snapshot.data() : {};
+    const transactions = Array.isArray(existing.transactions) ? existing.transactions : [];
+    if (transactions.length >= 200) throw new Error('Payment history has reached its maximum size.');
+    transactions.push({ id: crypto.randomUUID(), date, amount, note, recordedAt: Date.now() });
+    await ref.set({ studentId, totalFee: Number(existing.totalFee) || 50000, transactions, updatedAt: Date.now() }, { merge: true });
+    await writeAudit(req, 'payment.transaction_added', studentId);
+    return res.status(201).json({ transaction: transactions.at(-1), transactions });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.patch('/api/admin/payments/:studentId/transactions/:transactionIndex', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const transactionIndex = Number(req.params.transactionIndex);
+    if (!Number.isInteger(transactionIndex) || transactionIndex < 0) throw new Error('Payment record is invalid.');
+    const date = dateValue(req.body.date);
+    const amount = Number(req.body.amount);
+    const note = text(req.body.note, 'Payment note', { max: 300 });
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 10000000) {
+      throw new Error('Paid amount must be greater than zero.');
+    }
+    const db = getFirestore();
+    const ref = db.collection('payments').doc(studentId);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) throw new Error('Payment record was not found.');
+    const existing = snapshot.data();
+    const transactions = Array.isArray(existing.transactions) ? existing.transactions : [];
+    if (!transactions[transactionIndex]) throw new Error('Payment entry was not found.');
+    transactions[transactionIndex] = {
+      ...transactions[transactionIndex],
+      date,
+      amount,
+      note,
+      updatedAt: Date.now()
+    };
+    await ref.set({ transactions, updatedAt: Date.now() }, { merge: true });
+    await writeAudit(req, 'payment.transaction_updated', studentId);
+    return res.json({ transaction: transactions[transactionIndex] });
   } catch (error) {
     return clientError(res, error);
   }
@@ -685,7 +774,15 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
     const syllabus = {};
     syllabusSnapshot.forEach(item => { syllabus[item.data().testId || item.id] = item.data().subjects || {}; });
     const payments = {};
-    paymentsSnapshot.forEach(item => { payments[item.id] = item.data().records || {}; });
+    paymentsSnapshot.forEach(item => {
+      const data = item.data();
+      payments[item.id] = {
+        totalFee: Number(data.totalFee) || 50000,
+        records: data.records || {},
+        transactions: Array.isArray(data.transactions) ? data.transactions : [],
+        lastFeeMessage: data.lastFeeMessage || null
+      };
+    });
     return res.json({
       version: '3.0',
       students: studentsSnapshot.docs.map(item => ({ id: item.id, ...item.data() })),
@@ -756,8 +853,9 @@ app.post('/api/admin/import', requireSameOrigin, requireAdmin, async (req, res) 
 
     if (source.payments !== undefined) {
       if (!source.payments || typeof source.payments !== 'object' || Array.isArray(source.payments)) throw new Error('Payment backup data is invalid.');
-      Object.entries(source.payments).forEach(([studentId, rawRecords]) => {
+      Object.entries(source.payments).forEach(([studentId, paymentData]) => {
         const id = documentId(studentId, 'Student ID');
+        const rawRecords = paymentData?.records || paymentData;
         if (!rawRecords || typeof rawRecords !== 'object' || Array.isArray(rawRecords)) throw new Error('Payment backup data is invalid.');
         const records = {};
         Object.entries(rawRecords).forEach(([monthYear, record]) => {
@@ -770,7 +868,14 @@ app.post('/api/admin/import', requireSameOrigin, requireAdmin, async (req, res) 
             updatedAt: Number(record.updatedAt) || Date.now()
           };
         });
-        writes.push({ ref: db.collection('payments').doc(id), data: { studentId: id, records } });
+        const importedTotalFee = paymentData?.records ? Number(paymentData.totalFee) : 50000;
+        if (!Number.isFinite(importedTotalFee) || importedTotalFee < 0 || importedTotalFee > 10000000) throw new Error('Payment total fee is invalid.');
+        const transactions = Array.isArray(paymentData?.transactions) ? paymentData.transactions.map(transaction => {
+          const amount = Number(transaction?.amount);
+          if (!Number.isFinite(amount) || amount <= 0 || amount > 10000000) throw new Error('Payment transaction amount is invalid.');
+          return { date: dateValue(transaction.date), amount, note: text(transaction.note, 'Payment note', { max: 300 }), recordedAt: Number(transaction.recordedAt) || Date.now() };
+        }) : [];
+        writes.push({ ref: db.collection('payments').doc(id), data: { studentId: id, records, totalFee: importedTotalFee, transactions } });
       });
     }
 
@@ -893,6 +998,229 @@ app.post('/api/notifications/whatsapp-broadcast', requireSameOrigin, requireAdmi
     return res.json({ success: true, total: results.length, results: results.map(({ studentName, status }) => ({ studentName, success: status.success })) });
   } catch (error) {
     return clientError(res, error);
+  }
+});
+
+app.post('/api/notifications/alert-admin', requireSameOrigin, requireAdmin, notificationLimiter, async (req, res) => {
+  try {
+    const phone = phoneValue(req.body.phone, 'Admin phone number');
+    if (!phone) return res.status(400).json({ message: 'Admin phone number is required.' });
+
+    const templateName = req.body.templateName ? text(req.body.templateName, 'Template name', { max: 80 }) : undefined;
+
+    let payload = req.body.message;
+    if (req.body.details && typeof req.body.details === 'object') {
+      payload = {
+        date: text(req.body.details.date, 'Date', { max: 30 }),
+        subject: text(req.body.details.subject, 'Subject', { max: 100 }),
+        absenteeList: text(req.body.details.absenteeList, 'Absentee List', { max: 2000 }),
+        total: req.body.details.total || 0,
+        present: req.body.details.present || 0,
+        absent: req.body.details.absent || 0,
+        adminName: req.body.details.adminName ? text(req.body.details.adminName, 'Admin name', { max: 80 }) : 'Anand Sir',
+        templateName: templateName,
+        text: req.body.message ? text(req.body.message, 'Message text', { max: 4000 }) : ''
+      };
+    } else if (templateName) {
+      payload = {
+        templateName: templateName,
+        text: text(req.body.message, 'Message text', { required: true, max: 4000 })
+      };
+    } else {
+      payload = text(req.body.message, 'Message text', { required: true, max: 4000 });
+    }
+    
+    const result = await notificationService.sendAdminAlert(phone, payload);
+    await writeAudit(req, 'notification.alert_admin', phone);
+    return result.success 
+      ? res.json({ success: true, message: 'Absentee alert sent to Admin.' }) 
+      : res.status(502).json({ message: result.error || 'Failed to deliver notification to Admin.' });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+// ───────────────────────────────────────────────────
+// WhatsApp Webhook (incoming messages from parents)
+// ───────────────────────────────────────────────────
+
+// Verification endpoint – Meta sends a GET with hub.verify_token during webhook setup
+app.get('/webhook/whatsapp', (req, res) => {
+  const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('✅ WhatsApp webhook verified successfully.');
+    return res.status(200).send(challenge);
+  }
+  console.warn('⚠️ WhatsApp webhook verification failed.');
+  return res.sendStatus(403);
+});
+
+// Receive incoming messages – Meta POSTs message payloads here
+app.post('/webhook/whatsapp', async (req, res) => {
+  // Always respond 200 quickly so Meta doesn't retry
+  res.sendStatus(200);
+
+  try {
+    const entry = req.body?.entry?.[0];
+    const changes = entry?.changes?.[0]?.value;
+    if (!changes || !changes.messages) return;
+
+    const message = changes.messages[0];
+    const contact = changes.contacts?.[0];
+    const fromPhone = message.from; // e.g. '919876543210'
+    const messageId = message.id;
+    const timestamp = message.timestamp;
+    const profileName = contact?.profile?.name || '';
+
+    // Extract message text based on type
+    let messageText = '';
+    const messageType = message.type;
+    if (messageType === 'text') {
+      messageText = message.text?.body || '';
+    } else if (messageType === 'image') {
+      messageText = `[Image] ${message.image?.caption || ''}`.trim();
+    } else if (messageType === 'video') {
+      messageText = `[Video] ${message.video?.caption || ''}`.trim();
+    } else if (messageType === 'audio') {
+      messageText = '[Voice message]';
+    } else if (messageType === 'document') {
+      messageText = `[Document] ${message.document?.filename || ''}`.trim();
+    } else if (messageType === 'sticker') {
+      messageText = '[Sticker]';
+    } else if (messageType === 'reaction') {
+      messageText = `[Reaction: ${message.reaction?.emoji || ''}]`;
+    } else if (messageType === 'location') {
+      messageText = `[Location: ${message.location?.latitude}, ${message.location?.longitude}]`;
+    } else if (messageType === 'contacts') {
+      messageText = '[Shared Contact]';
+    } else if (messageType === 'button') {
+      messageText = message.button?.text || '[Button reply]';
+    } else if (messageType === 'interactive') {
+      messageText = message.interactive?.button_reply?.title
+        || message.interactive?.list_reply?.title
+        || '[Interactive reply]';
+    } else {
+      messageText = `[${messageType || 'unknown'} message]`;
+    }
+
+    // Normalize phone to 10-digit for matching with student records
+    const cleanPhone = fromPhone.replace(/[^0-9]/g, '').slice(-10);
+
+    // Try to match the phone to a student
+    let matchedStudent = null;
+    try {
+      const db = getFirestore();
+      const studentsSnap = await db.collection('students').get();
+      studentsSnap.forEach(doc => {
+        const s = doc.data();
+        const phone1 = (s.phone || '').replace(/[^0-9]/g, '').slice(-10);
+        const phone2 = (s.parentPhone || '').replace(/[^0-9]/g, '').slice(-10);
+        if ((phone1 && phone1 === cleanPhone) || (phone2 && phone2 === cleanPhone)) {
+          matchedStudent = { id: doc.id, name: s.name };
+        }
+      });
+    } catch (err) {
+      console.error('Student matching failed:', err.message);
+    }
+
+    // Store the reply in Firestore
+    try {
+      const db = getFirestore();
+      await db.collection('whatsapp_replies').add({
+        messageId,
+        from: fromPhone,
+        phone: cleanPhone,
+        profileName,
+        messageType,
+        messageText,
+        matchedStudentId: matchedStudent?.id || null,
+        matchedStudentName: matchedStudent?.name || null,
+        receivedAt: new Date().toISOString(),
+        waTimestamp: timestamp,
+        read: false
+      });
+      console.log(`📩 WhatsApp reply from ${profileName || cleanPhone}: "${messageText}"`);
+    } catch (err) {
+      console.error('Failed to store WhatsApp reply:', err.message);
+    }
+
+    // Send an auto-reply (free within 24h service window)
+    if (messageType === 'text' && messageText.length > 0) {
+      try {
+        const waToken = process.env.WHATSAPP_TOKEN;
+        const waPhoneId = process.env.WHATSAPP_PHONE_ID;
+        if (waToken && waPhoneId) {
+          const studentRef = matchedStudent ? ` for ${matchedStudent.name}` : '';
+          await fetch(`https://graph.facebook.com/v20.0/${waPhoneId}/messages`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${waToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              messaging_product: 'whatsapp',
+              to: fromPhone,
+              type: 'text',
+              text: {
+                body: `Thank you for your reply${studentRef}. We have noted your message. - Galaxy Academy`
+              }
+            })
+          });
+        }
+      } catch (err) {
+        console.error('Auto-reply failed:', err.message);
+      }
+    }
+  } catch (err) {
+    console.error('Webhook processing error:', err);
+  }
+});
+
+// Admin API — fetch WhatsApp replies
+app.get('/api/admin/whatsapp-replies', requireAdmin, async (req, res) => {
+  try {
+    const db = getFirestore();
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const snapshot = await db.collection('whatsapp_replies')
+      .orderBy('receivedAt', 'desc')
+      .limit(limit)
+      .get();
+
+    const replies = [];
+    snapshot.forEach(doc => {
+      replies.push({ id: doc.id, ...doc.data() });
+    });
+    return res.json({ replies });
+  } catch (error) {
+    return firebaseError(res, error);
+  }
+});
+
+// Admin API — mark a reply as read
+app.patch('/api/admin/whatsapp-replies/:id/read', requireAdmin, async (req, res) => {
+  try {
+    const db = getFirestore();
+    const replyId = documentId(req.params.id, 'Reply ID');
+    await db.collection('whatsapp_replies').doc(replyId).update({ read: true });
+    return res.json({ success: true });
+  } catch (error) {
+    return firebaseError(res, error);
+  }
+});
+
+// Admin API — delete a reply
+app.delete('/api/admin/whatsapp-replies/:id', requireAdmin, async (req, res) => {
+  try {
+    const db = getFirestore();
+    const replyId = documentId(req.params.id, 'Reply ID');
+    await db.collection('whatsapp_replies').doc(replyId).delete();
+    return res.json({ success: true });
+  } catch (error) {
+    return firebaseError(res, error);
   }
 });
 

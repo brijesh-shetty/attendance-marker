@@ -1,4 +1,4 @@
-const CACHE_NAME = 'galaxy-academy-cache-v7';
+const CACHE_NAME = 'galaxy-academy-cache-v10';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
