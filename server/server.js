@@ -1046,7 +1046,7 @@ app.post('/api/notifications/alert-admin', requireSameOrigin, requireAdmin, noti
 
 // Verification endpoint – Meta sends a GET with hub.verify_token during webhook setup
 app.get('/webhook/whatsapp', (req, res) => {
-  const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+  const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'galaxy_academy_wa_hook_2026';
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
@@ -1233,6 +1233,8 @@ app.get('/sw.js', (req, res) => res.sendFile(path.join(ROOT_DIR, 'sw.js')));
 app.get('/manifest.json', (req, res) => res.sendFile(path.join(ROOT_DIR, 'manifest.json')));
 app.get('/robots.txt', (req, res) => res.sendFile(path.join(ROOT_DIR, 'robots.txt')));
 app.get('/sitemap.xml', (req, res) => res.sendFile(path.join(ROOT_DIR, 'sitemap.xml')));
+app.get('/privacy', (req, res) => res.sendFile(path.join(ROOT_DIR, 'privacy.html')));
+app.get('/privacy.html', (req, res) => res.sendFile(path.join(ROOT_DIR, 'privacy.html')));
 app.get('/', (req, res) => res.sendFile(path.join(ROOT_DIR, 'index.html')));
 
 app.use((req, res) => res.status(404).json({ message: 'Not found.' }));

@@ -18,3 +18,5 @@ services:
         sync: false
       - key: WHATSAPP_PHONE_ID
         sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
