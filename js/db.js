@@ -39,10 +39,27 @@ class DatabaseManager {
     });
   }
 
-  async studentLogin(studentId, password) {
+  async getBatches() {
+    return this.request('/admin/batches');
+  }
+
+  async createBatch(batchNumber, academicYear, grade) {
+    return (await this.request('/admin/batches', { method: 'POST', body: JSON.stringify({ batchNumber, academicYear, grade }) })).batch;
+  }
+
+  async selectBatch(batchId) {
+    return (await this.request('/admin/batches/select', { method: 'POST', body: JSON.stringify({ batchId }) })).batch;
+  }
+
+  async studentLogin(credentials, passwordArg) {
+    // Support both the legacy 2-argument shape (studentId, password) and the
+    // new object form { batchNumber, year, grade, number, studentId, password }.
+    const body = typeof credentials === 'string'
+      ? { studentId: credentials, password: passwordArg }
+      : credentials;
     return this.request('/auth/student/login', {
       method: 'POST',
-      body: JSON.stringify({ studentId, password })
+      body: JSON.stringify(body)
     });
   }
 
@@ -156,6 +173,33 @@ class DatabaseManager {
     });
   }
 
+  async deletePaymentTransaction(studentId, transactionIndex) {
+    return this.request(`/admin/payments/${encodeURIComponent(studentId)}/transactions/${encodeURIComponent(transactionIndex)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async deleteAllPaymentTransactions(studentId) {
+    return this.request(`/admin/payments/${encodeURIComponent(studentId)}/transactions`, {
+      method: 'DELETE'
+    });
+  }
+
+  async sendFeeReminders(payload) {
+    return this.request('/admin/fee-reminders', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async getFeeReminders(date) {
+    return this.request(`/admin/fee-reminders?date=${encodeURIComponent(date)}`);
+  }
+
+  async getAttendanceReminders(date) {
+    return this.request(`/admin/attendance-reminders?date=${encodeURIComponent(date)}`);
+  }
+
   async exportJSON() {
     return JSON.stringify(await this.request('/admin/export'), null, 2);
   }
@@ -196,6 +240,24 @@ class DatabaseManager {
     });
   }
 
+  async getConversations() {
+    return (await this.request('/replies/conversations')).conversations;
+  }
+
+  async sendReply(wa_id, text) {
+    return this.request('/replies/send', {
+      method: 'POST',
+      body: JSON.stringify({ wa_id, text })
+    });
+  }
+
+  async sendTemplateReply(wa_id, template_name, params = [], language = 'en') {
+    return this.request('/replies/send-template', {
+      method: 'POST',
+      body: JSON.stringify({ wa_id, template_name, params, language })
+    });
+  }
+
   async getWhatsAppReplies(limit = 50) {
     return (await this.request(`/admin/whatsapp-replies?limit=${limit}`)).replies;
   }
@@ -210,6 +272,27 @@ class DatabaseManager {
     return this.request(`/admin/whatsapp-replies/${encodeURIComponent(replyId)}`, {
       method: 'DELETE'
     });
+  }
+
+  async getAdminResources() {
+    return (await this.request('/admin/resources')).resources;
+  }
+
+  async uploadAdminResource(payload) {
+    return this.request('/admin/resources', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async deleteAdminResource(resourceId) {
+    return this.request(`/admin/resources/${encodeURIComponent(resourceId)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async getStudentResources() {
+    return (await this.request('/student/resources')).resources;
   }
 }
 

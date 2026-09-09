@@ -14,13 +14,13 @@ class AppController {
       attendance: document.getElementById("attendance-view"),
       tests: document.getElementById("tests-view"),
       payments: document.getElementById("payments-view"),
-      broadcast: document.getElementById("broadcast-view"),
+      resources: document.getElementById("resources-view"),
       replies: document.getElementById("replies-view")
     };
 
     this.navItems = document.querySelectorAll(".bottom-nav .nav-item");
     this.toastContainer = document.getElementById("toast-container");
-    
+
     // Bind Event Listeners
     this.initEventListeners();
   }
@@ -38,8 +38,11 @@ class AppController {
     try {
       const session = await db.getSession();
       if (session.user?.role === "admin") {
-        this.hideLoginScreen();
-        await this.switchView("dashboard");
+        if (session.user.activeBatchId) {
+          const batches = await db.getBatches();
+          const batch = batches.batches.find(item => item.id === session.user.activeBatchId);
+          if (batch) { this.activateBatch(batch); } else { await this.showBatchWorkspace(); }
+        } else await this.showBatchWorkspace();
       } else {
         this.showLoginScreen();
       }
@@ -61,6 +64,41 @@ class AppController {
 
   hideLoginScreen() {
     document.getElementById("login-overlay").style.display = "none";
+  }
+
+  async showBatchWorkspace() {
+    this.hideLoginScreen();
+    document.getElementById('app-container').style.display = 'none';
+    document.getElementById('batch-overlay').style.display = 'flex';
+    try {
+      const result = await db.getBatches();
+      const container = document.getElementById('batch-list-container');
+      const batches = (result && Array.isArray(result.batches) && result.batches.length > 0)
+        ? result.batches
+        : [{ id: '2026-12-1', batchNumber: 1, academicYear: 2026, grade: 12, studentCount: 0 }];
+
+      container.innerHTML = batches.map(batch => `<button class="card batch-select-card" data-batch-id="${this.escapeHtml(batch.id)}" style="text-align:left; cursor:pointer; padding:14px;"><strong>Batch ${batch.batchNumber}</strong><div style="font-size:.8rem; color:var(--text-muted); margin-top:4px;">Grade ${batch.grade} · ${batch.academicYear}</div><div style="font-size:.75rem; margin-top:7px; color:var(--primary-hover);">${batch.studentCount || 0} student(s)</div></button>`).join('');
+      container.querySelectorAll('.batch-select-card').forEach(button => button.addEventListener('click', async () => {
+        try {
+          const batch = await db.selectBatch(button.dataset.batchId);
+          this.activateBatch(batch);
+        } catch (error) {
+          this.showToast(error.message || 'Unable to select batch.', 'danger');
+        }
+      }));
+    } catch (err) {
+      console.error('Failed to show batch workspace:', err);
+      this.activateBatch({ id: '2026-12-1', batchNumber: 1, academicYear: 2026, grade: 12 });
+    }
+  }
+
+  activateBatch(batch) {
+    this.activeBatch = batch;
+    document.getElementById('batch-overlay').style.display = 'none';
+    document.getElementById('app-container').style.display = '';
+    document.getElementById('active-batch-label').textContent = `Batch ${batch.batchNumber} · Grade ${batch.grade} · ${batch.academicYear}`;
+    this.hideLoginScreen();
+    this.switchView('dashboard');
   }
 
   // Get current date string in YYYY-MM-DD format
@@ -85,7 +123,7 @@ class AppController {
     toast.append(text, close);
     this.toastContainer.appendChild(toast);
     lucide.createIcons();
-    
+
     setTimeout(() => {
       toast.style.opacity = '0';
       setTimeout(() => toast.remove(), 300);
@@ -95,7 +133,10 @@ class AppController {
   // Page Routing & Switching Tabs
   switchView(viewName) {
     if (!this.views[viewName]) return;
-    
+
+    // Leaving the replies tab always dismisses an open chat screen.
+    if (viewName !== "replies" && this.chatOpen) this.closeConversation();
+
     // Deactivate current active states
     Object.values(this.views).forEach(view => view.classList.remove("active"));
     this.navItems.forEach(item => item.classList.remove("active"));
@@ -106,7 +147,7 @@ class AppController {
     if (activeNav) activeNav.classList.add("active");
 
     this.currentView = viewName;
-    
+
     // Refresh page data
     this.refreshViewData(viewName);
   }
@@ -125,8 +166,8 @@ class AppController {
       case "payments":
         await this.loadPaymentsList();
         break;
-      case "broadcast":
-        document.getElementById("broadcast-message-input").value = "";
+      case "resources":
+        await this.loadAdminResources();
         break;
       case "tests":
         document.getElementById("test-setup-panel").style.display = "block";
@@ -148,38 +189,201 @@ class AppController {
     const container = document.getElementById('payments-list-container');
     const detail = document.getElementById('payment-student-detail-container');
     const [students, allPayments] = await Promise.all([db.getStudents(), db.getPayments()]);
-    const dueStudents = [];
+
+    // Build one summary object per student. `dueRatio` is used by the filter.
     const summaries = students.map((student, index) => {
       const paymentData = allPayments[student.id] || {};
-      const totalFee = Number(paymentData.totalFee) || 50000;
+      const totalFee = Number(paymentData.totalFee) || 65000;
       const transactions = Array.isArray(paymentData.transactions) ? paymentData.transactions : [];
       const paid = transactions.reduce((sum, transaction) => sum + (Number(transaction?.amount) || 0), 0);
       const balance = Math.max(totalFee - paid, 0);
-      const item = { student, index, paymentData, transactions, totalFee, paid, balance };
-      if (balance > 0) dueStudents.push(item);
-      return item;
+      const dueRatio = totalFee > 0 ? balance / totalFee : 0;
+      return { student, index, paymentData, transactions, totalFee, paid, balance, dueRatio };
     });
-    container.innerHTML = summaries.length ? '' : '<p style="text-align:center; color:var(--text-muted); padding:20px;">No students registered.</p>';
-    summaries.forEach(item => {
+
+    // Save on the instance so the reminder-sender panel can read the same list
+    // without another Firestore round trip.
+    this.paymentSummaries = summaries;
+
+    const filterEl = document.getElementById('payment-fee-filter');
+    const filter = filterEl ? filterEl.value : 'all';
+    const filtered = this.filterPaymentSummaries(summaries, filter);
+    this.paymentFilteredIds = new Set(filtered.map(item => item.student.id));
+
+    const countEl = document.getElementById('payment-filter-count');
+    if (countEl) countEl.textContent = `${filtered.length} of ${summaries.length} student(s)`;
+
+    container.innerHTML = filtered.length ? '' : '<p style="text-align:center; color:var(--text-muted); padding:20px;">No students match the current filter.</p>';
+    filtered.forEach(item => {
       const state = this.getFeePaymentState(item.paid, item.totalFee);
       const row = document.createElement('div');
       row.setAttribute('role', 'button'); row.setAttribute('tabindex', '0'); row.setAttribute('aria-label', `Open fee details for ${item.student.name}`);
       row.className = 'card';
       row.style.cssText = `width:100%; text-align:left; margin-bottom:10px; padding:14px; cursor:pointer; color:inherit; border-left:4px solid ${state.color}; background:${state.background};`;
-      row.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px;"><div><strong>${item.index + 1}. ${this.escapeHtml(item.student.name)}</strong><span class="badge" style="font-size:.7rem; margin-left:6px;">ID: #${this.escapeHtml(item.student.id)}</span><div style="font-size:.75rem; color:var(--text-muted); margin-top:4px;">Tap to add a payment or view history</div></div><div style="text-align:right;"><div style="font-size:.68rem; color:${state.color}; font-weight:700;">${state.label}</div><strong style="display:block; color:${state.color}; font-size:1rem; margin-top:3px;">${item.balance > 0 ? `Due: ${this.formatCurrency(item.balance)}` : 'Paid in full'}</strong></div></div>`;
+      // Show BOTH received and due, side by side, so admins don't have to open
+      // the detail panel just to see whether a partial payment came in.
+      row.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+          <div>
+            <strong>${item.index + 1}. ${this.escapeHtml(item.student.name)}</strong>
+            <span class="badge" style="font-size:.7rem; margin-left:6px;">#${this.escapeHtml(String(item.student.number || item.student.id))}</span>
+            <div style="font-size:.72rem; color:${state.color}; font-weight:700; margin-top:4px;">${state.label}</div>
+          </div>
+          <div style="text-align:right; font-size:.78rem;">
+            <div style="color:var(--text-muted);">Received</div>
+            <strong style="display:block; color:var(--success);">${this.formatCurrency(item.paid)}</strong>
+            <div style="color:var(--text-muted); margin-top:4px;">Due</div>
+            <strong style="display:block; color:${item.balance > 0 ? 'var(--danger)' : 'var(--success)'};">${this.formatCurrency(item.balance)}</strong>
+          </div>
+        </div>`;
       const openDetails = () => { this.showPaymentStudentDetail(item, detail); detail.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
       row.addEventListener('click', openDetails);
       row.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDetails(); } });
       container.appendChild(row);
     });
-    document.getElementById('bulk-fee-message-help').textContent = `${dueStudents.length} student(s) have an outstanding balance. Previews are copied for review; no WhatsApp messages are sent yet.`;
-    document.getElementById('copy-all-due-messages-btn').onclick = async () => {
-      const template = document.getElementById('bulk-fee-template-select').value;
-      const messages = dueStudents.map(item => this.buildFeeMessage(template, item.student, item)).join('\n\n---\n\n');
-      if (!messages) return this.showToast('There are no due messages to copy.', 'info');
-      try { await navigator.clipboard.writeText(messages); this.showToast(`${dueStudents.length} fee-message previews copied for review.`); }
-      catch { this.showToast('Unable to copy messages. Please try again.', 'danger'); }
-    };
+
+    this.renderFeeReminderRecipients();
+    this.renderFeesTotalSummary(summaries);
+    this.loadFeeReminderLog();
+    lucide.createIcons();
+  }
+
+  filterPaymentSummaries(summaries, filter) {
+    if (filter === 'due-over-50') return summaries.filter(item => item.dueRatio > 0.5);
+    if (filter === 'due-under-50') return summaries.filter(item => item.dueRatio > 0 && item.dueRatio <= 0.5);
+    return summaries;
+  }
+
+  renderFeesTotalSummary(summaries) {
+    const container = document.getElementById('fees-total-summary');
+    if (!container) return;
+    const totalStudents = summaries.length;
+    const totalExpected = summaries.reduce((sum, item) => sum + item.totalFee, 0);
+    const totalReceived = summaries.reduce((sum, item) => sum + item.paid, 0);
+    const totalDue = summaries.reduce((sum, item) => sum + item.balance, 0);
+    const dueStudents = summaries.filter(item => item.balance > 0).length;
+    const fmt = (n) => this.formatCurrency(n);
+    container.innerHTML = `
+      <div><small style="color:var(--text-muted);">Students</small><strong style="display:block;">${totalStudents}</strong></div>
+      <div><small style="color:var(--text-muted);">Total expected</small><strong style="display:block;">${fmt(totalExpected)}</strong></div>
+      <div><small style="color:var(--text-muted);">Received</small><strong style="display:block; color:var(--success);">${fmt(totalReceived)}</strong></div>
+      <div><small style="color:var(--text-muted);">Outstanding</small><strong style="display:block; color:${totalDue > 0 ? 'var(--danger)' : 'var(--success)'};">${fmt(totalDue)}</strong></div>
+      <div><small style="color:var(--text-muted);">With balance</small><strong style="display:block;">${dueStudents} / ${totalStudents}</strong></div>`;
+  }
+
+  renderFeeReminderRecipients() {
+    const listEl = document.getElementById('fee-reminder-recipients-list');
+    const countEl = document.getElementById('fee-reminder-selection-count');
+    if (!listEl) return;
+    const selected = this.feeReminderSelection = this.feeReminderSelection || new Set();
+    // Drop selections for students that no longer exist (e.g. deleted).
+    const validIds = new Set((this.paymentSummaries || []).map(item => item.student.id));
+    for (const id of Array.from(selected)) if (!validIds.has(id)) selected.delete(id);
+
+    listEl.innerHTML = '';
+    (this.paymentSummaries || []).forEach(item => {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:6px 8px; cursor:pointer; border-radius:6px;';
+      row.onmouseover = () => row.style.background = 'var(--bg-card-hover)';
+      row.onmouseout = () => row.style.background = 'transparent';
+      const isChecked = selected.has(item.student.id);
+      row.innerHTML = `
+        <input type="checkbox" class="fee-reminder-cb" data-id="${this.escapeHtml(item.student.id)}" ${isChecked ? 'checked' : ''}>
+        <span style="flex:1; font-size:.85rem;">${this.escapeHtml(item.student.name)} <span style="color:var(--text-muted); font-size:.72rem;">#${this.escapeHtml(String(item.student.number || item.student.id))}</span></span>
+        <span style="font-size:.72rem; color:${item.balance > 0 ? 'var(--danger)' : 'var(--success)'};">Due ${this.formatCurrency(item.balance)}</span>`;
+      row.querySelector('.fee-reminder-cb').addEventListener('change', event => {
+        if (event.target.checked) selected.add(item.student.id);
+        else selected.delete(item.student.id);
+        if (countEl) countEl.textContent = `${selected.size} selected`;
+      });
+      listEl.appendChild(row);
+    });
+    if (countEl) countEl.textContent = `${selected.size} selected`;
+  }
+
+  async loadFeeReminderLog() {
+    const container = document.getElementById('fee-reminder-log-container');
+    if (!container) return;
+    const today = this.getLocalDateString();
+    try {
+      const { logs } = await db.getFeeReminders(today);
+      if (!logs || !logs.length) {
+        container.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem; margin:0;">No reminders sent today.</p>';
+        return;
+      }
+      container.innerHTML = logs.map(log => {
+        const time = new Date(log.sentAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const succeeded = Number(log.succeeded || 0);
+        const total = Number(log.total || 0);
+        let icon = '✅';
+        if (succeeded === 0) icon = '❌';
+        else if (succeeded < total) icon = '⚠️';
+
+        const names = (log.recipients || []).map(r =>
+          `<li style="font-size:.75rem; ${r.success ? '' : 'color:var(--danger);'}">
+             ${r.success ? '✓' : '✕'} ${this.escapeHtml(r.studentName || r.studentId)}${r.success ? '' : ` — ${this.escapeHtml(r.error || 'failed')}`}
+           </li>`).join('');
+
+        // Group distinct errors so the reason is impossible to miss.
+        const errorReasons = Array.from(new Set((log.recipients || [])
+          .filter(r => !r.success && r.error)
+          .map(r => r.error)));
+        const errorsHtml = errorReasons.length
+          ? `<div style="margin-top:8px; padding:8px; border-left:3px solid var(--danger); background:rgba(239,68,68,.08); font-size:.72rem; color:var(--danger);">
+               <strong>Errors:</strong>
+               <ul style="margin:4px 0 0 16px; padding:0;">${errorReasons.map(e => `<li>${this.escapeHtml(e)}</li>`).join('')}</ul>
+             </div>` : '';
+
+        return `
+          <div style="border-top:1px solid var(--border-color); padding:8px 0;">
+            <div style="display:flex; justify-content:space-between; gap:8px; font-size:.8rem;">
+              <strong>${icon} ${this.escapeHtml(log.templateName)}</strong>
+              <span style="color:var(--text-muted);">${time} · ${succeeded}/${total} delivered</span>
+            </div>
+            <ul style="margin:6px 0 0 16px; padding:0;">${names}</ul>
+            ${errorsHtml}
+          </div>`;
+      }).join('');
+    } catch (err) {
+      container.innerHTML = `<p style="color:var(--danger); font-size:.8rem;">Failed to load log: ${this.escapeHtml(err.message || '')}</p>`;
+    }
+  }
+
+  async sendFeeReminders() {
+    const templateName = (document.getElementById('fee-reminder-template-input').value || '').trim();
+    if (!templateName) return this.showToast('Enter a template name first.', 'danger');
+    const selected = Array.from(this.feeReminderSelection || []);
+    if (!selected.length) return this.showToast('Select at least one student.', 'danger');
+    if (!confirm(`Send WhatsApp reminder “${templateName}” to ${selected.length} student(s)?`)) return;
+
+    const btn = document.getElementById('fee-reminder-send-btn');
+    btn.disabled = true;
+    const originalLabel = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="loader" style="animation:spin 1s linear infinite; width:14px; height:14px;"></i> Sending';
+    lucide.createIcons();
+
+    try {
+      const result = await db.sendFeeReminders({ studentIds: selected, templateName });
+      // Surface the actual outcome — a total wipeout (0/N) is a danger toast
+      // that includes the first error so the admin knows why (e.g. template
+      // name typo → Meta 132001).
+      const firstError = (result.recipients || []).find(r => !r.success)?.error;
+      const severity = result.succeeded === 0 ? 'danger'
+                     : result.failed > 0 ? 'danger' : 'success';
+      const errSuffix = firstError ? ` — first error: ${firstError}` : '';
+      this.showToast(`Reminders: ${result.succeeded}/${result.total} delivered, ${result.failed} failed${errSuffix}`, severity);
+      // Only clear the picked list on a fully-clean send. If some (or all) failed
+      // the admin usually wants to retry after fixing the template name.
+      if (result.failed === 0) this.feeReminderSelection = new Set();
+      this.renderFeeReminderRecipients();
+      await this.loadFeeReminderLog();
+    } catch (err) {
+      this.showToast(`Failed to send reminders: ${err.message || 'Server error'}`, 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+      lucide.createIcons();
+    }
   }
 
   getFeePaymentState(paid, totalFee) {
@@ -192,7 +396,7 @@ class AppController {
     const { student, paymentData, transactions, totalFee, paid, balance } = item;
     const state = this.getFeePaymentState(paid, totalFee);
     const history = transactions.map((transaction, index) => ({ transaction, index })).sort((a, b) => String(b.transaction.date || '').localeCompare(String(a.transaction.date || '')) || (Number(b.transaction.recordedAt) || 0) - (Number(a.transaction.recordedAt) || 0));
-    const historyHtml = history.length ? history.map(({ transaction, index }) => `<div style="display:grid; grid-template-columns:1fr auto; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color);"><div><strong style="font-size:.82rem;">${this.escapeHtml(transaction.date)}</strong>${transaction.note ? `<div style="font-size:.75rem; color:var(--text-muted); margin-top:2px;">${this.escapeHtml(transaction.note)}</div>` : ''}</div><div style="display:flex; align-items:center; gap:8px;"><strong style="color:var(--success);">${this.formatCurrency(transaction.amount)}</strong><button class="btn btn-secondary edit-payment-btn" data-index="${index}" style="padding:4px 7px; font-size:.72rem;">Edit</button></div></div>`).join('') : '<p style="color:var(--text-muted); font-size:.8rem; margin:8px 0 0;">No payments recorded yet.</p>';
+    const historyHtml = history.length ? history.map(({ transaction, index }) => `<div style="display:grid; grid-template-columns:1fr auto; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color);"><div><strong style="font-size:.82rem;">${this.escapeHtml(transaction.date)}</strong>${transaction.note ? `<div style="font-size:.75rem; color:var(--text-muted); margin-top:2px;">${this.escapeHtml(transaction.note)}</div>` : ''}</div><div style="display:flex; align-items:center; gap:6px;"><strong style="color:var(--success);">${this.formatCurrency(transaction.amount)}</strong><button class="btn btn-secondary edit-payment-btn" data-index="${index}" style="padding:4px 7px; font-size:.72rem;">Edit</button><button class="btn btn-danger delete-payment-btn" data-index="${index}" style="padding:4px 7px; font-size:.72rem;">Delete</button></div></div>`).join('') : '<p style="color:var(--text-muted); font-size:.8rem; margin:8px 0 0;">No payments recorded yet.</p>';
     detail.style.display = 'block';
     detail.innerHTML = `<div class="card" style="padding:14px; border-left:4px solid ${state.color};"><div style="display:flex; justify-content:space-between; gap:8px;"><div><h3 style="margin:0; font-size:1rem;">${this.escapeHtml(student.name)}</h3><span style="font-size:.75rem; color:${state.color}; font-weight:700;">${state.label}</span></div><button class="btn btn-secondary close-fee-detail-btn" style="padding:5px 9px;">Close</button></div><div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-top:12px;"><div><small>Total fee</small><strong style="display:block;">${this.formatCurrency(totalFee)}</strong></div><div><small>Received fee</small><strong style="display:block; color:var(--success);">${this.formatCurrency(paid)}</strong></div><div><small>${balance > 0 ? 'Due' : 'Status'}</small><strong style="display:block; color:${state.color};">${balance > 0 ? this.formatCurrency(balance) : 'Paid in full'}</strong></div></div><div style="display:flex; gap:8px; margin-top:12px; align-items:end;"><div class="input-group" style="margin:0; flex:1;"><label>Total fee</label><input class="input-field detail-total-fee" type="number" min="0" step="0.01" value="${totalFee}"></div><button class="btn btn-secondary save-total-fee-btn" style="padding:9px 12px;">Save Total</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Add payment received</strong><div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;"><div class="input-group" style="margin:0;"><label>Payment date</label><input class="input-field detail-payment-date" type="date" value="${this.getLocalDateString()}"></div><div class="input-group" style="margin:0;"><label>Paid amount</label><input class="input-field detail-amount" type="number" min="0.01" step="0.01" placeholder="0.00"></div></div><div class="input-group" style="margin-top:8px;"><label>Note (optional)</label><input class="input-field detail-notes" maxlength="300" placeholder="e.g. UPI reference / instalment"></div><button class="btn btn-primary btn-full add-payment-btn" style="margin-top:8px;">Add Payment</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Payment history</strong>${historyHtml}<div class="payment-edit-container"></div></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:.85rem;">Parent Message Preview</strong><span style="font-size:.72rem; color:var(--text-muted);">${paymentData.lastFeeMessage ? `Last sent: ${this.escapeHtml(paymentData.lastFeeMessage.template || 'template')} · ${new Date(paymentData.lastFeeMessage.sentAt).toLocaleDateString('en-IN')}` : 'Not sent yet'}</span></div><select class="select-field detail-template" style="margin-top:8px;"><option value="balance_reminder">Balance reminder</option><option value="payment_thanks">Payment received / thank you</option><option value="fee_reminder">Fee reminder</option></select><div class="detail-preview" style="margin-top:8px; padding:9px; border-radius:7px; background:rgba(255,255,255,.04); font-size:.8rem; line-height:1.45;"></div><button class="btn btn-secondary btn-full copy-detail-message-btn" style="margin-top:8px;">Copy Preview for Review</button></div></div>`;
     const totalInput = detail.querySelector('.detail-total-fee'); const template = detail.querySelector('.detail-template'); const preview = detail.querySelector('.detail-preview');
@@ -218,6 +422,38 @@ class AppController {
         } catch (error) { this.showToast(error.message || 'Unable to update payment.', 'danger'); }
       });
     }));
+    detail.querySelectorAll('.delete-payment-btn').forEach(button => button.addEventListener('click', async () => {
+      const index = Number(button.dataset.index);
+      const transaction = transactions[index];
+      if (!transaction) return;
+      if (!confirm(`Delete payment of ${this.formatCurrency(transaction.amount)} on ${transaction.date}? This cannot be undone.`)) return;
+      try {
+        await db.deletePaymentTransaction(student.id, index);
+        this.showToast(`Payment entry deleted for ${student.name}.`);
+        detail.style.display = 'none';
+        await this.loadPaymentsList();
+      } catch (err) {
+        this.showToast(err.message || 'Unable to delete payment.', 'danger');
+      }
+    }));
+    if (history.length) {
+      const wipeBtn = document.createElement('button');
+      wipeBtn.className = 'btn btn-danger';
+      wipeBtn.style.cssText = 'margin-top:8px; padding:6px 10px; font-size:.75rem;';
+      wipeBtn.textContent = `Delete all ${history.length} payment(s) for this student`;
+      wipeBtn.addEventListener('click', async () => {
+        if (!confirm(`This will erase ALL ${history.length} payment entries for ${student.name}. The total fee is kept. Continue?`)) return;
+        try {
+          await db.deleteAllPaymentTransactions(student.id);
+          this.showToast(`All payments cleared for ${student.name}.`);
+          detail.style.display = 'none';
+          await this.loadPaymentsList();
+        } catch (err) {
+          this.showToast(err.message || 'Unable to clear payments.', 'danger');
+        }
+      });
+      detail.querySelector('.payment-edit-container').after(wipeBtn);
+    }
     detail.querySelector('.close-fee-detail-btn').addEventListener('click', () => { detail.style.display = 'none'; detail.innerHTML = ''; });
     detail.querySelector('.save-total-fee-btn').addEventListener('click', async () => { try { const total = Number(totalInput.value); if (!Number.isFinite(total) || total < 0) throw new Error('Enter a valid total fee.'); await db.saveTotalFee(student.id, total); this.showToast(`Total fee for ${student.name} saved.`); detail.style.display = 'none'; await this.loadPaymentsList(); } catch (error) { this.showToast(error.message || 'Unable to save total fee.', 'danger'); } });
     detail.querySelector('.add-payment-btn').addEventListener('click', async () => { try { const date = detail.querySelector('.detail-payment-date').value; const amount = Number(detail.querySelector('.detail-amount').value); const note = detail.querySelector('.detail-notes').value.trim(); if (!date) throw new Error('Select the payment date.'); if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a valid paid amount.'); await db.addPaymentTransaction(student.id, date, amount, note); this.showToast(`Payment added for ${student.name}.`); detail.style.display = 'none'; await this.loadPaymentsList(); } catch (error) { this.showToast(error.message || 'Unable to add payment.', 'danger'); } });
@@ -233,7 +469,7 @@ class AppController {
 
     const today = this.getLocalDateString();
     const records = await db.getAttendance(today);
-    
+
     const absenteesListDiv = document.getElementById("dashboard-absentees-list");
     absenteesListDiv.innerHTML = "";
 
@@ -291,8 +527,8 @@ class AppController {
     container.innerHTML = "";
 
     const searchTerm = document.getElementById("student-search-input").value.toLowerCase();
-    const filtered = students.filter(s => 
-      s.name.toLowerCase().includes(searchTerm) || 
+    const filtered = students.filter(s =>
+      s.name.toLowerCase().includes(searchTerm) ||
       s.id.toString().includes(searchTerm)
     );
 
@@ -309,7 +545,7 @@ class AppController {
         <div class="student-info" style="flex: 1;">
           <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <span class="student-name">${idx + 1}. ${student.name}</span>
-            <span class="badge" style="font-size: 0.7rem; background-color: rgba(59, 130, 246, 0.2); color: var(--student-accent-hover); padding: 2px 6px; border-radius: 4px; font-weight: 700;">ID: #${student.id}</span>
+            <span class="badge" style="font-size: 0.7rem; background-color: rgba(59, 130, 246, 0.2); color: var(--student-accent-hover); padding: 2px 6px; border-radius: 4px; font-weight: 700;">#${student.number || student.id}</span>
             ${student.combination ? `<span class="badge" style="font-size: 0.7rem; background-color: rgba(139, 92, 246, 0.15); color: var(--primary-hover); padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase;">${student.combination}</span>` : ''}
             ${student.college ? `<span class="badge" style="font-size: 0.7rem; background-color: rgba(255, 255, 255, 0.05); color: var(--text-muted); padding: 2px 6px; border-radius: 4px; font-weight: 500; text-transform: uppercase;">${student.college}</span>` : ''}
           </div>
@@ -366,14 +602,15 @@ class AppController {
     if (!name) return;
 
     if (!id) {
-      // Auto-assign sequential integer ID starting from 1
+      // IDs are globally unique across batches.
       const existingStudents = await db.getStudents();
       let maxId = 0;
       existingStudents.forEach(s => {
-        const parsed = parseInt(s.id, 10);
+        const parsed = parseInt(String(s.id).split('-').pop(), 10);
         if (!isNaN(parsed) && parsed > maxId) maxId = parsed;
       });
-      id = (maxId + 1).toString();
+      const batch = this.activeBatch;
+      id = batch ? `${batch.academicYear}-${batch.grade}-${batch.batchNumber}-${String(maxId + 1).padStart(3, '0')}` : (maxId + 1).toString();
     }
 
     const studentData = { id, name, phone, parentPhone, combination, college };
@@ -409,7 +646,7 @@ class AppController {
         document.getElementById("detail-student-college").textContent = student.college || "N/A";
         document.getElementById("detail-parent-phone-1").textContent = student.phone || "N/A";
         document.getElementById("detail-parent-phone-2").textContent = student.parentPhone || "N/A";
-        
+
         const editBtn = document.getElementById("detail-edit-btn");
         const deleteBtn = document.getElementById("detail-delete-btn");
         const resetPassBtn = document.getElementById("reset-password-btn");
@@ -418,27 +655,27 @@ class AppController {
           const newResetBtn = resetPassBtn.cloneNode(true);
           resetPassBtn.parentNode.replaceChild(newResetBtn, resetPassBtn);
           newResetBtn.addEventListener("click", async () => {
-            if (confirm(`Reset password for Student #${student.id} (${student.name}) to parent phone number (${student.phone || student.parentPhone || 'default'})?`)) {
+            if (confirm(`Reset password for Student #${student.number || student.id} (${student.name}) to parent phone number (${student.phone || student.parentPhone || 'default'})?`)) {
               const res = await db.resetStudentPassword(student.id);
               this.showToast(res.message, "success");
             }
           });
         }
-        
+
         const newEditBtn = editBtn.cloneNode(true);
         const newDeleteBtn = deleteBtn.cloneNode(true);
         editBtn.parentNode.replaceChild(newEditBtn, editBtn);
         deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-        
+
         newEditBtn.addEventListener("click", () => {
           modal.classList.remove("active");
           this.openStudentModal(studentId);
         });
-        
+
         newDeleteBtn.addEventListener("click", () => {
           this.handleDeleteStudent(studentId);
         });
-        
+
         modal.classList.add("active");
         lucide.createIcons();
       }
@@ -455,10 +692,13 @@ class AppController {
     const dateVal = document.getElementById("attendance-date-input").value;
     if (!dateVal) return;
 
+    // Refresh the "reminder sent" indicator whenever the picked date changes.
+    this.loadAttendanceReminderLog(dateVal);
+
     const students = await db.getStudents();
     await this.populateReportStudentOptions(students);
     const records = await db.getAttendance(dateVal);
-    
+
     const isLeaveDay = records && records.__leaveDay === true;
     const startBtn = document.getElementById("attendance-start-btn");
     const leaveBtn = document.getElementById("attendance-leave-btn");
@@ -502,7 +742,7 @@ class AppController {
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
     const container = document.getElementById("attendance-list-container");
-    
+
     container.innerHTML = "";
 
     if (students.length === 0) {
@@ -545,7 +785,7 @@ class AppController {
 
     await db.saveAttendance(dateVal, records);
     this.showToast(`Attendance recorded for ${dateVal}.`);
-    
+
     // Exit to setup panel
     await this.loadAttendanceSetup();
   }
@@ -553,7 +793,7 @@ class AppController {
   async handleMarkLeaveDay() {
     const dateVal = document.getElementById("attendance-date-input").value;
     if (!dateVal) return;
-    
+
     if (confirm(`Are you sure you want to mark ${dateVal} as a Leave Day? Existing attendance for this day will be overwritten.`)) {
       await db.saveAttendance(dateVal, { __leaveDay: true });
       this.showToast(`Date ${dateVal} marked as a Leave Day.`);
@@ -565,7 +805,7 @@ class AppController {
   async handleUnmarkLeaveDay() {
     const dateVal = document.getElementById("attendance-date-input").value;
     if (!dateVal) return;
-    
+
     if (confirm(`Are you sure you want to unmark ${dateVal} as a Leave Day?`)) {
       await db.saveAttendance(dateVal, {});
       this.showToast(`Leave day status removed for ${dateVal}.`);
@@ -646,7 +886,7 @@ class AppController {
 
     const reportResultsDiv = document.getElementById("monthly-report-results");
     const tbody = document.getElementById("monthly-report-tbody");
-    
+
     if (!tbody || !reportResultsDiv) return;
 
     tbody.innerHTML = "";
@@ -765,7 +1005,7 @@ class AppController {
       });
     });
 
-    const filterSubtitle = targetStudents.length < students.length 
+    const filterSubtitle = targetStudents.length < students.length
       ? (targetStudents.length === 1 ? `Student: <strong>${targetStudents[0].name}</strong>` : `Filter: <strong>${targetStudents.length} Selected Students</strong>`)
       : '';
 
@@ -817,7 +1057,7 @@ class AppController {
 
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
-    
+
     let absent = 0;
     const absentees = [];
 
@@ -864,7 +1104,7 @@ class AppController {
     let saved = [];
     try {
       saved = JSON.parse(localStorage.getItem("admin_numbers") || "[]");
-    } catch(e) {
+    } catch (e) {
       saved = [];
     }
     if (!Array.isArray(saved) || saved.length === 0) {
@@ -903,7 +1143,7 @@ class AppController {
       const chip = document.createElement("span");
       const isSelected = item.phone === currentPhone;
       chip.style.cssText = `display: inline-flex; align-items: center; gap: 6px; background: ${isSelected ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.08)'}; border: 1px solid ${isSelected ? 'var(--primary)' : 'rgba(255, 255, 255, 0.15)'}; border-radius: 16px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer; color: var(--text-main); transition: all 0.2s ease;`;
-      
+
       chip.innerHTML = `
         <span class="chip-select-btn" data-id="${item.id}"><strong>${item.name}</strong> (${item.phone})</span>
         <span class="chip-remove-btn" data-id="${item.id}" title="Remove number" style="display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: rgba(239,68,68,0.25); color: var(--danger); font-size: 11px; font-weight: bold; line-height: 1; margin-left: 2px;">×</span>
@@ -983,7 +1223,7 @@ class AppController {
     if (mainSubjectEl && adminSubjectEl) {
       adminSubjectEl.value = mainSubjectEl.value;
     }
-    
+
     // Load saved phone number if exists
     const list = this.getSavedAdminNumbers();
     if (list.length > 0 && !phoneInput.value) {
@@ -1005,9 +1245,9 @@ class AppController {
     const adminSubjectEl = document.getElementById("admin-subject-select");
     const mainSubjectEl = document.getElementById("attendance-subject-select");
     const subjectVal = (adminSubjectEl && adminSubjectEl.value) || (mainSubjectEl && mainSubjectEl.value) || "Tuition";
-    
+
     const adminNameVal = (document.getElementById("admin-name-input").value || "Anand Sir").trim();
-    
+
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
 
@@ -1065,8 +1305,8 @@ class AppController {
     }
 
     const encodedText = encodeURIComponent(text);
-    const waUrl = cleanPhone 
-      ? `https://wa.me/${cleanPhone}?text=${encodedText}` 
+    const waUrl = cleanPhone
+      ? `https://wa.me/${cleanPhone}?text=${encodedText}`
       : `https://api.whatsapp.com/send?text=${encodedText}`;
 
     window.open(waUrl, "_blank");
@@ -1077,7 +1317,7 @@ class AppController {
     const rawPhone = phoneInput.value.trim();
     const text = document.getElementById("admin-report-template").value;
     const adminNameVal = (document.getElementById("admin-name-input").value || "Anand Sir").trim();
-    const templateNameVal = (document.getElementById("admin-template-name-input").value || "admin_absentee_alert").trim();
+    const templateNameVal = document.getElementById("admin-template-name-input").value.trim();
 
     if (!rawPhone) {
       this.showToast("Please enter Admin phone number.", "danger");
@@ -1096,7 +1336,7 @@ class AppController {
     const dateVal = document.getElementById("attendance-date-input").value;
     const subjectEl = document.getElementById("attendance-subject-select");
     const subjectVal = subjectEl ? subjectEl.value : "Tuition";
-    
+
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
 
@@ -1125,7 +1365,7 @@ class AppController {
         body: JSON.stringify({
           phone: rawPhone,
           message: text,
-          templateName: templateNameVal,
+          ...(templateNameVal ? { templateName: templateNameVal } : {}),
           details: {
             date: formattedDate,
             subject: subjectVal,
@@ -1203,9 +1443,9 @@ class AppController {
         </thead>
         <tbody>
           ${students.map((student, index) => {
-            const status = records[student.id] === "A" ? "❌ ABSENT (AB)" : "✅ PRESENT";
-            const statusClass = records[student.id] === "A" ? "text-danger" : "";
-            return `
+      const status = records[student.id] === "A" ? "❌ ABSENT (AB)" : "✅ PRESENT";
+      const statusClass = records[student.id] === "A" ? "text-danger" : "";
+      return `
               <tr>
                 <td class="text-center">${index + 1}</td>
                 <td>
@@ -1215,7 +1455,7 @@ class AppController {
                 <td class="text-center ${statusClass}">${status}</td>
               </tr>
             `;
-          }).join('')}
+    }).join('')}
         </tbody>
       </table>
     `;
@@ -1233,14 +1473,14 @@ class AppController {
     const students = await db.getStudents();
     const scores = await db.getTestMarks(this.selectedTest, this.selectedSubject);
     const container = document.getElementById("test-students-list");
-    
+
     container.innerHTML = "";
 
     // Show syllabus preview if exists
     const syllabus = await db.getSyllabus(this.selectedTest);
     const previewDiv = document.getElementById("test-syllabus-info-card");
     const previewText = document.getElementById("test-syllabus-preview-text");
-    
+
     if (syllabus[this.selectedSubject]) {
       previewText.textContent = syllabus[this.selectedSubject];
       previewDiv.style.display = "block";
@@ -1270,7 +1510,7 @@ class AppController {
     students.forEach((student, idx) => {
       const studentScoreData = scores[student.id] || { present: true, cetMarks: "", theoryMarks: "", totalMarks: "", marks: "" };
       const isPresent = studentScoreData.present !== false;
-      
+
       let cetVal = studentScoreData.cetMarks !== undefined ? studentScoreData.cetMarks : "";
       let theoryVal = studentScoreData.theoryMarks !== undefined ? studentScoreData.theoryMarks : "";
       let totalVal = studentScoreData.totalMarks !== undefined ? studentScoreData.totalMarks : (studentScoreData.marks || "");
@@ -1320,15 +1560,15 @@ class AppController {
       const cetInput = container.querySelector(`.test-cet-marks-field[data-id="${studentId}"]`);
       const theoryInput = container.querySelector(`.test-theory-marks-field[data-id="${studentId}"]`);
       const totalInput = container.querySelector(`.test-total-marks-field[data-id="${studentId}"]`);
-      
+
       if (cetInput.disabled) {
         totalInput.value = "AB";
         return;
       }
-      
+
       const cet = parseFloat(cetInput.value.trim());
       const theory = parseFloat(theoryInput.value.trim());
-      
+
       let total = "";
       if (!isNaN(cet) && !isNaN(theory)) {
         total = cet + theory;
@@ -1425,7 +1665,7 @@ class AppController {
       const cetInput = container.querySelector(`.test-cet-marks-field[data-id="${student.id}"]`);
       const theoryInput = container.querySelector(`.test-theory-marks-field[data-id="${student.id}"]`);
       const totalInput = container.querySelector(`.test-total-marks-field[data-id="${student.id}"]`);
-      
+
       const isPresent = checkbox ? checkbox.checked : true;
       const cetVal = cetInput ? cetInput.value.trim() : "";
       const theoryVal = theoryInput ? theoryInput.value.trim() : "";
@@ -1443,7 +1683,7 @@ class AppController {
     const type = document.getElementById("test-type-select").value;
     const num = document.getElementById("test-num-input").value.trim();
     const date = document.getElementById("test-date-input").value;
-    
+
     const cetTotal = Number(document.getElementById("test-cet-total").value) || 25;
     const theoryTotal = Number(document.getElementById("test-theory-total").value) || 25;
     const sumTotal = Number(document.getElementById("test-sum-total").value) || (cetTotal + theoryTotal);
@@ -1457,14 +1697,29 @@ class AppController {
       sumTotal: sumTotal
     };
 
-    await db.saveTestMarks(this.selectedTest, this.selectedSubject, results, meta);
+    const saveBtn = document.getElementById("save-test-marks-btn");
+    const originalLabel = saveBtn ? saveBtn.innerHTML : null;
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = 'Saving...'; }
+
+    try {
+      await db.saveTestMarks(this.selectedTest, this.selectedSubject, results, meta);
+    } catch (err) {
+      // A silent save was the earlier bug — surface the failure to the admin
+      // and keep the sheet open so nothing they typed is lost.
+      console.error('Failed to save test marks:', err);
+      this.showToast(`Failed to save test marks: ${err.message || 'Server error'}`, "danger");
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = originalLabel; }
+      return;
+    }
+
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = originalLabel; }
     this.showToast(`Test marks successfully saved.`);
     this.calculateAverageScoreBadge();
-    
+
     // Go back to setup panel
     document.getElementById("test-setup-panel").style.display = "block";
     document.getElementById("test-sheet-panel").style.display = "none";
-    
+
     // Refresh history list
     this.loadPreviousTests();
   }
@@ -1495,7 +1750,7 @@ class AppController {
       const data = scores[s.id] || { present: true, totalMarks: "", marks: "" };
       const isPresent = data.present !== false;
       const totalVal = data.totalMarks !== undefined ? data.totalMarks : data.marks;
-      
+
       if (!isPresent || totalVal === "AB") {
         absentees.push(s.name);
       } else if (totalVal !== undefined && totalVal !== "") {
@@ -1536,16 +1791,16 @@ class AppController {
         </thead>
         <tbody>
           ${students.map((student, index) => {
-            const data = scores[student.id] || { present: true, cetMarks: "", theoryMarks: "", totalMarks: "", marks: "" };
-            const isPresent = data.present !== false;
-            
-            let cetVal = isPresent ? (data.cetMarks !== undefined ? data.cetMarks : "") : "AB";
-            let theoryVal = isPresent ? (data.theoryMarks !== undefined ? data.theoryMarks : "") : "AB";
-            let totalVal = isPresent ? (data.totalMarks !== undefined ? data.totalMarks : (data.marks || "")) : "AB";
-            
-            const statusClass = !isPresent ? "text-danger" : "";
+      const data = scores[student.id] || { present: true, cetMarks: "", theoryMarks: "", totalMarks: "", marks: "" };
+      const isPresent = data.present !== false;
 
-            return `
+      let cetVal = isPresent ? (data.cetMarks !== undefined ? data.cetMarks : "") : "AB";
+      let theoryVal = isPresent ? (data.theoryMarks !== undefined ? data.theoryMarks : "") : "AB";
+      let totalVal = isPresent ? (data.totalMarks !== undefined ? data.totalMarks : (data.marks || "")) : "AB";
+
+      const statusClass = !isPresent ? "text-danger" : "";
+
+      return `
               <tr>
                 <td class="text-center">${index + 1}</td>
                 <td>
@@ -1559,7 +1814,7 @@ class AppController {
                 </td>
               </tr>
             `;
-          }).join('')}
+    }).join('')}
         </tbody>
       </table>
     `;
@@ -1573,7 +1828,7 @@ class AppController {
     const subjectVal = document.getElementById("attendance-subject-select").value;
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
-    
+
     const absentees = [];
     students.forEach(s => {
       if (records[s.id] === "A") {
@@ -1623,19 +1878,74 @@ class AppController {
       });
 
       const data = await response.json();
-      if (response.ok && data.success) {
-        this.showToast(`Successfully sent ${data.total} WhatsApp notification(s)!`, "success");
+      if (!response.ok) throw new Error(data.message || 'Failed to send broadcast');
+
+      // The server now returns { delivered, total, results:[{success,error}] }
+      // so we can distinguish "0/2 delivered" (all failed) from partial and full success.
+      const delivered = Number(data.delivered ?? 0);
+      const total = Number(data.total ?? absenteePayload.length);
+      const failedRecipients = (data.results || []).filter(r => !r.success);
+      if (delivered === 0) {
+        const firstError = failedRecipients[0]?.error || 'unknown error';
+        this.showToast(`WhatsApp broadcast FAILED — 0/${total} delivered. First error: ${firstError}`, "danger");
+      } else if (delivered < total) {
+        this.showToast(`Partial send — ${delivered}/${total} delivered. ${failedRecipients.length} failed.`, "danger");
       } else {
-        throw new Error(data.message || 'Failed to send broadcast');
+        this.showToast(`Successfully sent ${delivered} WhatsApp notification(s)!`, "success");
       }
+      // Refresh the log strip either way so the admin can see the recipient breakdown.
+      this.loadAttendanceReminderLog(dateVal);
     } catch (err) {
       console.error("Failed to send WhatsApp broadcast:", err);
-      this.showToast(`Failed to send WhatsApp notification. Check server console.`, "danger");
+      this.showToast(`Failed to send WhatsApp notification: ${err.message || 'Check server console.'}`, "danger");
     }
   }
 
-  async handleSendBroadcast() {
-    this.showToast("General SMS broadcast is disabled until it is implemented as a protected server-side integration.", "info");
+  async loadAttendanceReminderLog(dateVal) {
+    const container = document.getElementById('attendance-reminder-log');
+    if (!container || !dateVal) return;
+    try {
+      const { logs } = await db.getAttendanceReminders(dateVal);
+      if (!logs || !logs.length) { container.innerHTML = ''; return; }
+      const rows = logs.map(log => {
+        const time = new Date(log.sentAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const sent = Number(log.sent || 0);
+        const total = Number(log.total || (log.recipients ? log.recipients.length : 0));
+        // Match the icon + border color to actual delivery instead of always ✅.
+        let icon = '✅'; let border = 'var(--success)'; let statusLabel = 'Absentee message sent';
+        if (sent === 0) { icon = '❌'; border = 'var(--danger)'; statusLabel = 'Absentee message FAILED'; }
+        else if (sent < total) { icon = '⚠️'; border = '#f59e0b'; statusLabel = 'Absentee message partially sent'; }
+
+        const namesList = (log.recipients || []).map(r => {
+          const tooltip = r.success ? '' : ` title="${this.escapeHtml(r.error || 'Unknown error')}"`;
+          return `<span${tooltip} style="display:inline-block; padding:2px 6px; border-radius:10px; margin:2px; font-size:.68rem; background:${r.success ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)'}; color:${r.success ? 'var(--success)' : 'var(--danger)'}; cursor:${r.success ? 'default' : 'help'};">${r.success ? '✓' : '✕'} ${this.escapeHtml(r.studentName || r.phone || 'student')}</span>`;
+        }).join('');
+
+        // Also list the distinct error reasons below so admins can act without hovering each chip.
+        const errorReasons = Array.from(new Set((log.recipients || [])
+          .filter(r => !r.success && r.error)
+          .map(r => r.error)));
+        const errorsHtml = errorReasons.length
+          ? `<div style="margin-top:8px; padding:8px; border-left:3px solid var(--danger); background:rgba(239,68,68,.08); font-size:.72rem; color:var(--danger);">
+               <strong>Errors reported by WhatsApp:</strong>
+               <ul style="margin:4px 0 0 16px; padding:0;">${errorReasons.map(e => `<li>${this.escapeHtml(e)}</li>`).join('')}</ul>
+             </div>`
+          : '';
+
+        return `
+          <div style="border-left:4px solid ${border}; border:1px solid var(--border-color); border-left-width:4px; border-radius:8px; padding:8px 10px; margin-top:6px; background:rgba(255,255,255,0.02);">
+            <div style="display:flex; justify-content:space-between; font-size:.78rem;">
+              <strong>${icon} ${this.escapeHtml(statusLabel)}</strong>
+              <span style="color:var(--text-muted);">${time} · ${sent}/${total} delivered</span>
+            </div>
+            <div style="margin-top:6px;">${namesList}</div>
+            ${errorsHtml}
+          </div>`;
+      }).join('');
+      container.innerHTML = rows;
+    } catch (err) {
+      console.warn('Could not load attendance reminder log:', err.message);
+    }
   }
 
   /* =========================================================================
@@ -1647,7 +1957,7 @@ class AppController {
     const testId = `${type} ${num}`;
     const subject = document.getElementById("subject-select").value;
     const syllabus = await db.getSyllabus(testId);
-    
+
     document.getElementById("test-syllabus-input").value = syllabus[subject] || "";
 
     // Load CET / Theory totals
@@ -1660,25 +1970,30 @@ class AppController {
 
     if (cetTotalEl) cetTotalEl.value = cetTotal;
     if (theoryTotalEl) theoryTotalEl.value = theoryTotal;
-    if (sumTotalEl) sumTotalEl.value = cetTotal + theoryTotal;
+    // Honour a stored custom sumTotal (e.g. 40 when cet+theory happens to be 50);
+    // fall back to the cet+theory sum when the metadata doesn't provide one.
+    const storedSum = Number(meta.sumTotal);
+    if (sumTotalEl) sumTotalEl.value = Number.isFinite(storedSum) && storedSum > 0
+      ? storedSum
+      : (cetTotal + theoryTotal);
   }
 
   async loadPreviousTests() {
     const container = document.getElementById("previous-tests-container");
     container.innerHTML = "";
-    
+
     const tests = await db.getAllTests();
     if (tests.length === 0) {
       container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; font-style: italic; text-align: center; padding: 12px 0;">No tests recorded yet.</p>`;
       return;
     }
-    
+
     tests.forEach(test => {
       const div = document.createElement("div");
       div.className = "history-item";
-      
+
       const dateStr = test.date ? new Date(test.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'No Date';
-      
+
       div.innerHTML = `
         <div class="history-meta">
           <span class="history-title">${test.testId}</span>
@@ -1686,7 +2001,7 @@ class AppController {
         </div>
         <i data-lucide="chevron-right" style="width: 16px; height: 16px; color: var(--text-muted);"></i>
       `;
-      
+
       div.addEventListener("click", async () => {
         // Parse type and number
         const match = test.testId.match(/^([a-zA-Z\s]+)\s+(\d+)$/);
@@ -1697,26 +2012,26 @@ class AppController {
           document.getElementById("test-type-select").value = "Test";
           document.getElementById("test-num-input").value = test.testId.replace("Test ", "");
         }
-        
+
         document.getElementById("test-date-input").value = test.date || "";
         document.getElementById("subject-select").value = test.subject;
-        
+
         await this.loadTestSyllabus();
-        
+
         // Navigate directly to editing
         this.selectedTest = test.testId;
         this.selectedSubject = test.subject;
-        
+
         // Show sheet panel
         document.getElementById("test-active-label").textContent = `Test: ${this.selectedTest} | Subject: ${this.selectedSubject} | Date: ${test.date || 'N/A'}`;
         document.getElementById("test-setup-panel").style.display = "none";
         document.getElementById("test-sheet-panel").style.display = "block";
         this.loadTestList();
       });
-      
+
       container.appendChild(div);
     });
-    
+
     lucide.createIcons();
   }
 
@@ -1770,7 +2085,7 @@ class AppController {
       // Supports existing payment documents while using the new fee summary shape.
       const studentPayments = paymentData.records || paymentData;
       const currentPay = studentPayments[month] || { status: 'due', amount: '', notes: '' };
-      const totalFee = Number(paymentData.totalFee) || 50000;
+      const totalFee = Number(paymentData.totalFee) || 65000;
       const totalPaid = Object.values(studentPayments).reduce((sum, record) => {
         if (!record || record.status === 'due') return sum;
         const amount = Number(record.amount);
@@ -1790,7 +2105,7 @@ class AppController {
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
           <div>
             <span style="font-weight: 700; font-size: 0.95rem;">${idx + 1}. ${this.escapeHtml(student.name)}</span>
-            <span class="badge" style="font-size: 0.7rem; background-color: rgba(59, 130, 246, 0.2); color: var(--student-accent-hover); margin-left: 6px;">ID: #${student.id}</span>
+            <span class="badge" style="font-size: 0.7rem; background-color: rgba(59, 130, 246, 0.2); color: var(--student-accent-hover); margin-left: 6px;">#${student.number || student.id}</span>
           </div>
           <div style="display: flex; gap: 6px; align-items: center;">
             <select class="select-field pay-status-select" data-id="${student.id}" style="padding: 4px 8px; font-size: 0.8rem; width: auto;">
@@ -1880,7 +2195,7 @@ class AppController {
       const paymentData = allPayments[student.id] || {};
       const records = paymentData.records || paymentData;
       const current = records[month] || { status: 'due', amount: '', notes: '' };
-      const totalFee = Number(paymentData.totalFee) || 50000;
+      const totalFee = Number(paymentData.totalFee) || 65000;
       const paid = Object.values(records).reduce((sum, record) => sum + (record?.status === 'due' ? 0 : (Number(record?.amount) || 0)), 0);
       const balance = Math.max(totalFee - paid, 0);
       const summary = { student, index, paymentData, records, current, totalFee, paid, balance, month };
@@ -1896,7 +2211,7 @@ class AppController {
       row.setAttribute('aria-label', `Open fee details for ${item.student.name}`);
       row.className = 'card';
       row.style.cssText = 'width:100%; text-align:left; margin-bottom:10px; padding:14px; cursor:pointer; color:inherit;';
-      row.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px;"><div><strong>${item.index + 1}. ${this.escapeHtml(item.student.name)}</strong><span class="badge" style="font-size:.7rem; margin-left:6px;">ID: #${this.escapeHtml(item.student.id)}</span><div style="font-size:.75rem; color:var(--text-muted); margin-top:4px;">Tap to view fee details and message template</div></div><div style="text-align:right;"><div style="font-size:.7rem; color:var(--text-muted);">DUE AMOUNT</div><strong style="color:var(--danger); font-size:1rem;">${this.formatCurrency(item.balance)}</strong></div></div>`;
+      row.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px;"><div><strong>${item.index + 1}. ${this.escapeHtml(item.student.name)}</strong><span class="badge" style="font-size:.7rem; margin-left:6px;">#${this.escapeHtml(String(item.student.number || item.student.id))}</span><div style="font-size:.75rem; color:var(--text-muted); margin-top:4px;">Tap to view fee details and message template</div></div><div style="text-align:right;"><div style="font-size:.7rem; color:var(--text-muted);">DUE AMOUNT</div><strong style="color:var(--danger); font-size:1rem;">${this.formatCurrency(item.balance)}</strong></div></div>`;
       const openDetails = () => {
         this.showPaymentStudentDetailMonthlyLegacy(item, detail);
         detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2002,8 +2317,7 @@ class AppController {
       const inputVal = document.getElementById("login-passcode").value;
       try {
         await db.adminLogin(inputVal);
-        this.hideLoginScreen();
-        this.switchView("dashboard");
+        await this.showBatchWorkspace();
         document.getElementById("login-passcode").value = "";
         this.showToast("Login successful. Welcome admin!");
       } catch (err) {
@@ -2020,6 +2334,14 @@ class AppController {
       }
       this.showLoginScreen();
       this.showToast("Logged out & locked portal successfully.");
+    });
+    document.getElementById('change-batch-btn').addEventListener('click', () => this.showBatchWorkspace());
+    document.getElementById('batch-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        const batch = await db.createBatch(Number(document.getElementById('batch-number-input').value), Number(document.getElementById('batch-year-input').value), Number(document.getElementById('batch-grade-input').value));
+        this.activateBatch(await db.selectBatch(batch.id));
+      } catch (error) { this.showToast(error.message || 'Unable to create batch.', 'danger'); }
     });
 
     // Settings Modal controls
@@ -2072,7 +2394,7 @@ class AppController {
     });
     document.getElementById("save-attendance-btn").addEventListener("click", () => this.handleSaveAttendance());
     document.getElementById("download-absentees-btn").addEventListener("click", () => this.handleDownloadAbsentees());
-    
+
     // Send to Admin (Sir) Handlers
     const sendToAdminBtn = document.getElementById("send-to-admin-btn");
     if (sendToAdminBtn) sendToAdminBtn.addEventListener("click", () => this.openSendToAdminModal());
@@ -2145,11 +2467,11 @@ class AppController {
         this.showToast("Report text reset to default template.", "info");
       });
     }
-    
+
     // Leave Day Handlers
     const leaveBtn = document.getElementById("attendance-leave-btn");
     if (leaveBtn) leaveBtn.addEventListener("click", () => this.handleMarkLeaveDay());
-    
+
     const unleaveBtn = document.getElementById("attendance-unleave-btn");
     if (unleaveBtn) unleaveBtn.addEventListener("click", () => this.handleUnmarkLeaveDay());
 
@@ -2197,7 +2519,7 @@ class AppController {
         this.showToast("Please enter a test number.", "danger");
         return;
       }
-      
+
       const date = document.getElementById("test-date-input").value;
       if (!date) {
         this.showToast("Please select a test date.", "danger");
@@ -2206,7 +2528,7 @@ class AppController {
 
       this.selectedTest = `${type} ${num}`;
       this.selectedSubject = document.getElementById("subject-select").value;
-      
+
       // Auto-save edited syllabus
       const syllabusVal = document.getElementById("test-syllabus-input").value.trim();
       const savedSyllabus = await db.getSyllabus(this.selectedTest);
@@ -2226,114 +2548,624 @@ class AppController {
     document.getElementById("print-test-sheet-btn").addEventListener("click", () => this.printMarksSheet());
 
     // Payments View Handlers
-    const payMonth = document.getElementById("payment-month-select");
-    const payFilter = document.getElementById("payment-filter-status");
-    if (payMonth) payMonth.addEventListener("change", () => this.loadPaymentsList());
-    if (payFilter) payFilter.addEventListener("change", () => this.loadPaymentsList());
+    const feeFilter = document.getElementById("payment-fee-filter");
+    if (feeFilter) feeFilter.addEventListener("change", () => this.loadPaymentsList());
+
+    const selectFilterBtn = document.getElementById("fee-reminder-select-filter-btn");
+    if (selectFilterBtn) selectFilterBtn.addEventListener("click", () => {
+      this.feeReminderSelection = this.feeReminderSelection || new Set();
+      (this.paymentFilteredIds || new Set()).forEach(id => this.feeReminderSelection.add(id));
+      this.renderFeeReminderRecipients();
+    });
+    const clearSelBtn = document.getElementById("fee-reminder-clear-btn");
+    if (clearSelBtn) clearSelBtn.addEventListener("click", () => {
+      this.feeReminderSelection = new Set();
+      this.renderFeeReminderRecipients();
+    });
+    const sendReminderBtn = document.getElementById("fee-reminder-send-btn");
+    if (sendReminderBtn) sendReminderBtn.addEventListener("click", () => this.sendFeeReminders());
+    const refreshLogBtn = document.getElementById("fee-reminder-log-refresh-btn");
+    if (refreshLogBtn) refreshLogBtn.addEventListener("click", () => this.loadFeeReminderLog());
 
     // Notification / Broadcast Handlers
     document.getElementById("send-absentees-sms-btn").addEventListener("click", () => this.handleSendAbsenteesSMS());
-    document.getElementById("send-broadcast-btn").addEventListener("click", () => this.handleSendBroadcast());
 
-    // WhatsApp Replies Handlers
-    const refreshRepliesBtn = document.getElementById("refresh-replies-btn");
-    if (refreshRepliesBtn) refreshRepliesBtn.addEventListener("click", () => this.loadReplies());
+    // Resource Management Handlers
+    const openUploadResBtn = document.getElementById("open-upload-resource-modal-btn");
+    if (openUploadResBtn) {
+      openUploadResBtn.addEventListener("click", () => {
+        document.getElementById("upload-resource-form").reset();
+        document.getElementById("target-combination-group").style.display = "none";
+        document.getElementById("target-student-group").style.display = "none";
+        document.getElementById("upload-resource-modal").classList.add("active");
+      });
+    }
+
+    const closeUploadResBtn = document.getElementById("upload-resource-modal-close");
+    if (closeUploadResBtn) {
+      closeUploadResBtn.addEventListener("click", () => {
+        document.getElementById("upload-resource-modal").classList.remove("active");
+      });
+    }
+
+    const cancelUploadResBtn = document.getElementById("upload-resource-cancel");
+    if (cancelUploadResBtn) {
+      cancelUploadResBtn.addEventListener("click", () => {
+        document.getElementById("upload-resource-modal").classList.remove("active");
+      });
+    }
+
+    const visSelect = document.getElementById("resource-visibility-select");
+    if (visSelect) {
+      visSelect.addEventListener("change", (e) => {
+        const val = e.target.value;
+        document.getElementById("target-combination-group").style.display = val === "combination" ? "block" : "none";
+        document.getElementById("target-student-group").style.display = val === "student" ? "block" : "none";
+      });
+    }
+
+    const uploadForm = document.getElementById("upload-resource-form");
+    if (uploadForm) {
+      uploadForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fileInput = document.getElementById("resource-file-input");
+        const titleInput = document.getElementById("resource-title-input");
+        const descInput = document.getElementById("resource-desc-input");
+        const visSelect = document.getElementById("resource-visibility-select");
+
+        if (!fileInput.files || fileInput.files.length === 0) {
+          return this.showToast("Please select a file to upload.", "danger");
+        }
+
+        const file = fileInput.files[0];
+        // Firestore's per-document cap forces a real-world file ceiling of ~750 KB;
+        // stop earlier here so the user gets a friendly message instead of a 400.
+        const MAX_BYTES = 750 * 1024;
+        if (file.size > MAX_BYTES) {
+          return this.showToast(`File is too large (${(file.size / 1024).toFixed(0)} KB). Maximum is ${(MAX_BYTES / 1024).toFixed(0)} KB.`, "danger");
+        }
+
+        const payload = {
+          title: titleInput.value.trim(),
+          description: descInput.value.trim(),
+          visibilityType: visSelect.value,
+          originalFileName: file.name,
+          mimeType: file.type || 'application/octet-stream'
+        };
+
+        if (visSelect.value === "combination") {
+          const selectedCombs = Array.from(document.querySelectorAll('input[name="res-comb"]:checked')).map(cb => cb.value);
+          if (selectedCombs.length === 0) {
+            return this.showToast("Select at least one combination.", "danger");
+          }
+          payload.targetCombinations = JSON.stringify(selectedCombs);
+        } else if (visSelect.value === "student") {
+          const studentIdsVal = document.getElementById("resource-student-ids-input").value.trim();
+          if (!studentIdsVal) {
+            return this.showToast("Enter at least one Student ID.", "danger");
+          }
+          payload.targetStudentIds = JSON.stringify(studentIdsVal.split(',').map(s => s.trim()).filter(Boolean));
+        }
+
+        const submitBtn = document.getElementById("upload-resource-submit");
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i data-lucide="loader" style="animation:spin 1s linear infinite; width:14px; height:14px;"></i> Uploading...';
+        lucide.createIcons();
+
+        try {
+          // Read the file as base64 and hand it over as JSON; the server keeps
+          // the base64 payload in a Firestore doc so no separate object store
+          // is needed.
+          payload.contentBase64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = String(reader.result || '');
+              const commaIndex = result.indexOf(',');
+              resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
+            };
+            reader.onerror = () => reject(new Error('Unable to read the selected file.'));
+            reader.readAsDataURL(file);
+          });
+          await db.uploadAdminResource(payload);
+          this.showToast("Study resource uploaded successfully!");
+          document.getElementById("upload-resource-modal").classList.remove("active");
+          uploadForm.reset();
+          await this.loadAdminResources();
+        } catch (err) {
+          this.showToast(err.message || 'Upload failed.', 'danger');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<i data-lucide="upload"></i> Upload';
+          lucide.createIcons();
+        }
+      });
+    }
   }
 
-  // ── WhatsApp Replies ──────────────────────────────
+  // ── WhatsApp 24-Hour Customer Service Window & Replies ──
+  setupRepliesListeners() {
+    const bindOnce = (id, event, handler) => {
+      const el = document.getElementById(id);
+      if (el && !el.dataset.bound) {
+        el.dataset.bound = "true";
+        el.addEventListener(event, handler);
+      }
+    };
+
+    bindOnce("refresh-replies-btn", "click", () => this.loadReplies());
+    bindOnce("chat-refresh-btn", "click", () => this.loadReplies());
+    bindOnce("chat-back-btn", "click", () => this.closeConversation());
+    bindOnce("send-reply-form", "submit", (e) => this.handleSendReply(e));
+    bindOnce("trigger-template-modal-btn", "click", () => this.openTemplateModal());
+    bindOnce("open-template-modal-direct-btn", "click", () => this.openTemplateModal());
+    bindOnce("close-send-template-modal-btn", "click", () => this.closeTemplateModal());
+    bindOnce("cancel-send-template-modal-btn", "click", () => this.closeTemplateModal());
+    bindOnce("send-template-form", "submit", (e) => this.handleSendTemplate(e));
+    bindOnce("template-name-select", "change", (e) => {
+      const customGroup = document.getElementById("custom-template-name-group");
+      if (customGroup) customGroup.style.display = e.target.value === "custom" ? "block" : "none";
+    });
+
+    // Hardware / browser back and Escape close the chat screen instead of leaving the portal.
+    if (!this.chatNavBound) {
+      this.chatNavBound = true;
+      window.addEventListener("popstate", () => {
+        if (this.chatOpen) this.closeConversation({ fromHistory: true });
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && this.chatOpen) this.closeConversation();
+      });
+    }
+  }
+
   async loadReplies() {
-    const container = document.getElementById("replies-list-container");
+    this.setupRepliesListeners();
+    const listEl = document.getElementById("conversations-list");
     const countEl = document.getElementById("replies-count");
-    container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:30px;"><i data-lucide="loader" style="animation:spin 1s linear infinite; width:18px; height:18px;"></i> Loading...</p>';
-    lucide.createIcons();
+    if (!listEl) return;
+
+    if (!this.conversations) {
+      listEl.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:30px;"><i data-lucide="loader" style="animation:spin 1s linear infinite; width:18px; height:18px;"></i> Loading...</p>';
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
 
     try {
-      const replies = await db.getWhatsAppReplies(100);
-      const unreadCount = replies.filter(r => !r.read).length;
-      countEl.textContent = replies.length
-        ? `${replies.length} message(s)${unreadCount ? ` · ${unreadCount} unread` : ''}`
-        : '';
+      const conversations = await db.getConversations();
+      this.conversations = conversations || [];
+      const totalUnread = this.conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
 
-      if (!replies.length) {
-        container.innerHTML = `
-          <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
-            <i data-lucide="inbox" style="width:40px; height:40px; margin-bottom:10px; opacity:0.4;"></i>
-            <p style="font-size:0.9rem;">No parent replies yet.</p>
-            <p style="font-size:0.78rem; margin-top:6px;">Replies will appear here when parents respond to your WhatsApp notifications.</p>
+      if (countEl) {
+        countEl.textContent = this.conversations.length
+          ? `${this.conversations.length} conversation(s)${totalUnread ? ` · ${totalUnread} unread` : ''}`
+          : '';
+      }
+
+      if (!this.conversations.length) {
+        listEl.innerHTML = `
+          <div style="text-align:center; padding:40px 16px; color:var(--text-muted);">
+            <i data-lucide="inbox" style="width:36px; height:36px; margin-bottom:8px; opacity:0.4;"></i>
+            <p style="font-size:0.85rem; margin:0;">No parent replies yet.</p>
+            <p style="font-size:0.75rem; margin-top:4px;">Conversations will appear here when parents reply to WhatsApp notifications.</p>
           </div>`;
-        lucide.createIcons();
+        if (this.chatOpen) this.closeConversation();
+        if (typeof lucide !== 'undefined') lucide.createIcons();
         return;
       }
 
-      container.innerHTML = '';
-      replies.forEach(reply => {
-        const time = new Date(reply.receivedAt);
-        const timeStr = time.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
-        const isUnread = !reply.read;
-        const studentBadge = reply.matchedStudentName
-          ? `<span style="background:#25D366; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:600;">${reply.matchedStudentName}</span>`
-          : `<span style="background:var(--bg-secondary); color:var(--text-muted); padding:2px 8px; border-radius:10px; font-size:0.72rem;">Unknown contact</span>`;
+      listEl.innerHTML = '';
+      this.conversations.forEach(conv => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = `conversation-item${conv.unread_count ? ' unread' : ''}`;
 
-        const typeBadge = reply.messageType !== 'text'
-          ? `<span style="background:var(--bg-secondary); padding:2px 6px; border-radius:8px; font-size:0.68rem; color:var(--text-muted);">${reply.messageType}</span> `
+        const lastMsg = conv.messages && conv.messages.length ? conv.messages[conv.messages.length - 1] : null;
+        // Prefix "You:" for outbound so admins immediately see whether the
+        // last activity in the thread was a parent message or their own reply.
+        const lastText = lastMsg
+          ? (lastMsg.direction === 'outbound'
+              ? `<span style="color:#25D366; font-weight:600;">You:</span> ${this.escapeHtml(lastMsg.content)}`
+              : this.escapeHtml(lastMsg.content))
+          : 'No messages';
+        const timeStr = conv.last_inbound_at
+          ? new Date(conv.last_inbound_at).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
           : '';
 
-        const card = document.createElement('div');
-        card.style.cssText = `padding:14px 16px; border-bottom:1px solid var(--border); display:flex; gap:12px; align-items:flex-start; ${isUnread ? 'background: rgba(37, 211, 102, 0.05);' : ''}`;
-        card.innerHTML = `
-          <div style="width:36px; height:36px; border-radius:50%; background:${isUnread ? '#25D366' : 'var(--bg-secondary)'}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-            <i data-lucide="${isUnread ? 'message-circle' : 'message-square'}" style="width:16px; height:16px; color:${isUnread ? '#fff' : 'var(--text-muted)'};"></i>
+        const badgeHtml = conv.is_window_open
+          ? '<span class="chat-tag open">Open</span>'
+          : '<span class="chat-tag expired">Expired</span>';
+
+        item.innerHTML = `
+          <div class="conv-row-top">
+            <span class="conv-name">${this.escapeHtml(conv.profile_name || 'Parent')}</span>
+            <span class="conv-time">${timeStr}</span>
           </div>
-          <div style="flex:1; min-width:0;">
-            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:4px;">
-              <span style="font-weight:${isUnread ? '700' : '500'}; font-size:0.88rem;">${reply.profileName || 'Parent'}</span>
-              ${studentBadge}
-              ${typeBadge}
-            </div>
-            <p style="margin:2px 0 6px; font-size:0.84rem; color:var(--text-main); word-break:break-word; ${isUnread ? 'font-weight:500;' : ''}">${this.escapeHtml(reply.messageText)}</p>
-            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-              <span style="font-size:0.72rem; color:var(--text-muted);">${timeStr}</span>
-              <span style="font-size:0.72rem; color:var(--text-muted);">+${reply.from || reply.phone}</span>
-              ${isUnread ? `<button class="reply-mark-read-btn" data-id="${reply.id}" style="font-size:0.72rem; color:#25D366; background:none; border:none; cursor:pointer; padding:0; text-decoration:underline;">Mark read</button>` : ''}
-              <button class="reply-delete-btn" data-id="${reply.id}" style="font-size:0.72rem; color:var(--danger, #ef4444); background:none; border:none; cursor:pointer; padding:0; text-decoration:underline;">Delete</button>
-            </div>
+          <div class="conv-tags">
+            ${conv.student_name ? `<span class="chat-tag student">${this.escapeHtml(conv.student_name)}</span>` : ''}
+            ${badgeHtml}
+            ${conv.unread_count ? `<span class="chat-tag unread">${conv.unread_count} new</span>` : ''}
+          </div>
+          <div class="conv-preview">
+            <p>${lastText}</p>
+            <i data-lucide="chevron-right" class="conv-chevron"></i>
           </div>`;
-        container.appendChild(card);
+
+        item.addEventListener('click', () => this.openConversation(conv.wa_id));
+        listEl.appendChild(item);
       });
 
-      // Attach mark-read handlers
-      container.querySelectorAll('.reply-mark-read-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          const id = e.target.dataset.id;
-          try {
-            await db.markReplyRead(id);
-            this.showToast('Marked as read.', 'success');
-            await this.loadReplies();
-          } catch (err) {
-            this.showToast('Failed to mark as read.', 'danger');
-          }
+      // Keep an already-open chat screen in sync with the refreshed data.
+      if (this.chatOpen) {
+        const activeConv = this.conversations.find(c => c.wa_id === this.activeWaId);
+        if (activeConv) this.renderActiveThread(activeConv);
+        else this.closeConversation();
+      }
+
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    } catch (err) {
+      console.error('Failed to load WhatsApp conversations:', err);
+      listEl.innerHTML = `<p style="text-align:center; color:var(--danger); padding:20px;">Failed to load conversations. ${this.escapeHtml(err.message || '')}</p>`;
+    }
+  }
+
+  openConversation(waId) {
+    const conv = (this.conversations || []).find(c => c.wa_id === waId);
+    const screen = document.getElementById("chat-screen");
+    if (!conv || !screen) return;
+
+    this.activeWaId = waId;
+    this.renderActiveThread(conv);
+
+    screen.classList.add("active");
+    screen.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    this.chatOpen = true;
+
+    try {
+      history.pushState({ chatWaId: waId }, "");
+      this.chatPushedState = true;
+    } catch (err) {
+      this.chatPushedState = false;
+    }
+  }
+
+  closeConversation(options = {}) {
+    const screen = document.getElementById("chat-screen");
+    if (screen) {
+      screen.classList.remove("active");
+      screen.setAttribute("aria-hidden", "true");
+    }
+    document.body.style.overflow = "";
+
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
+    }
+
+    const wasOpen = this.chatOpen;
+    this.chatOpen = false;
+
+    if (wasOpen && this.chatPushedState) {
+      this.chatPushedState = false;
+      if (!options.fromHistory) history.back();
+    }
+  }
+
+  renderActiveThread(conv) {
+    const nameEl = document.getElementById("active-contact-name");
+    const phoneEl = document.getElementById("active-contact-phone");
+    const studentBadge = document.getElementById("active-student-badge");
+
+    if (nameEl) nameEl.textContent = conv.profile_name || "Parent";
+    if (phoneEl) phoneEl.textContent = `+${conv.phone || conv.wa_id}`;
+    if (studentBadge) {
+      studentBadge.textContent = conv.student_name || "Unknown Student";
+      studentBadge.style.background = conv.student_name ? "#25D366" : "var(--bg-card-hover)";
+      studentBadge.style.color = conv.student_name ? "#05261a" : "var(--text-muted)";
+    }
+
+    this.updateWindowStatusBadge(conv);
+
+    const msgsList = document.getElementById("thread-messages-list");
+    if (!msgsList) return;
+
+    msgsList.innerHTML = '';
+    if (!conv.messages || !conv.messages.length) {
+      msgsList.innerHTML = '<p class="chat-empty">No messages in this conversation thread yet.</p>';
+      return;
+    }
+
+    conv.messages.forEach(msg => {
+      const isOutbound = msg.direction === 'outbound';
+      const bubble = document.createElement('div');
+      bubble.className = `chat-bubble ${isOutbound ? 'outbound' : 'inbound'}`;
+
+      const timeStr = msg.created_at
+        ? new Date(msg.created_at).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+        : '';
+
+      let statusIndicator = '';
+      if (isOutbound) {
+        statusIndicator = msg.status === 'failed'
+          ? '<span class="failed">Failed</span>'
+          : '<span class="sent">Sent</span>';
+      }
+
+      bubble.innerHTML = `
+        <div>${this.escapeHtml(msg.content)}</div>
+        <div class="chat-bubble-meta">${timeStr} ${statusIndicator}</div>`;
+      msgsList.appendChild(bubble);
+    });
+
+    msgsList.scrollTop = msgsList.scrollHeight;
+  }
+
+  updateWindowStatusBadge(conv) {
+    const badgeContainer = document.getElementById("window-status-badge-container");
+    const replyInput = document.getElementById("reply-text-input");
+    const sendBtn = document.getElementById("send-reply-btn");
+    const expiredAlert = document.getElementById("chat-expired-alert");
+    if (!badgeContainer) return;
+
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
+    }
+
+    const expiresAt = conv.window_expires_at ? new Date(conv.window_expires_at).getTime() : null;
+    const isOpen = Boolean(expiresAt && Date.now() < expiresAt);
+
+    if (isOpen) {
+      if (replyInput) {
+        replyInput.disabled = false;
+        replyInput.placeholder = "Type your reply message...";
+      }
+      if (sendBtn) sendBtn.disabled = false;
+      if (expiredAlert) expiredAlert.style.display = "none";
+
+      const tick = () => {
+        const remainingMs = expiresAt - Date.now();
+        if (remainingMs <= 0) {
+          clearInterval(this.countdownInterval);
+          this.countdownInterval = null;
+          this.updateWindowStatusBadge({ ...conv, is_window_open: false, window_expires_at: null });
+          return;
+        }
+        const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+        const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((remainingMs % (1000 * 60)) / 1000);
+
+        badgeContainer.innerHTML = `
+          <span style="background:rgba(37, 211, 102, 0.15); color:#25D366; font-size:0.75rem; font-weight:600; padding:5px 12px; border-radius:20px; border:1px solid rgba(37, 211, 102, 0.3); display:inline-flex; align-items:center; gap:6px;">
+            <span style="width:8px; height:8px; border-radius:50%; background:#25D366; display:inline-block; animation:pulse 1.5s infinite;"></span>
+            Reply window: ${hours}h ${minutes}m ${seconds}s left
+          </span>`;
+      };
+      tick();
+      this.countdownInterval = setInterval(tick, 1000);
+    } else {
+      if (replyInput) {
+        replyInput.disabled = true;
+        replyInput.value = "";
+        replyInput.placeholder = "24-hour window expired — send a template";
+      }
+      if (sendBtn) sendBtn.disabled = true;
+      if (expiredAlert) expiredAlert.style.display = "flex";
+
+      badgeContainer.innerHTML = `
+        <span style="background:rgba(239, 68, 68, 0.15); color:var(--danger); font-size:0.75rem; font-weight:600; padding:5px 12px; border-radius:20px; border:1px solid rgba(239, 68, 68, 0.3); display:inline-flex; align-items:center; gap:6px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--danger); display:inline-block;"></span>
+          24-hour window expired
+        </span>`;
+    }
+  }
+
+  async handleSendReply(e) {
+    e.preventDefault();
+    if (!this.activeWaId) return;
+    const replyInput = document.getElementById("reply-text-input");
+    const sendBtn = document.getElementById("send-reply-btn");
+    const textValue = (replyInput?.value || "").trim();
+    if (!textValue) return;
+
+    try {
+      sendBtn.disabled = true;
+      sendBtn.innerHTML = '<i data-lucide="loader" style="animation:spin 1s linear infinite;"></i>';
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+
+      await db.sendReply(this.activeWaId, textValue);
+      this.showToast("WhatsApp reply sent successfully!", "success");
+      if (replyInput) replyInput.value = "";
+      await this.loadReplies();
+    } catch (err) {
+      if (err.message && err.message.includes("WINDOW_EXPIRED")) {
+        this.showToast("24-hour customer service window expired. Please send an approved template instead.", "danger");
+        const activeConv = (this.conversations || []).find(c => c.wa_id === this.activeWaId);
+        if (activeConv) {
+          this.updateWindowStatusBadge({ ...activeConv, is_window_open: false, window_expires_at: null });
+        }
+      } else {
+        this.showToast(`Failed to send reply: ${err.message || 'Server error'}`, "danger");
+      }
+    } finally {
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<i data-lucide="send"></i>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+      }
+    }
+  }
+
+  openTemplateModal() {
+    if (!this.activeWaId) {
+      this.showToast("Select a conversation first.", "info");
+      return;
+    }
+    const conv = (this.conversations || []).find(c => c.wa_id === this.activeWaId);
+    const modal = document.getElementById("send-template-modal");
+    const waIdInput = document.getElementById("template-modal-wa-id");
+    const recipientDisplay = document.getElementById("template-modal-recipient-display");
+    const paramsInput = document.getElementById("template-params-input");
+
+    if (modal && waIdInput && recipientDisplay) {
+      waIdInput.value = this.activeWaId;
+      recipientDisplay.value = `${conv?.profile_name || 'Parent'} (+${conv?.phone || this.activeWaId}) ${conv?.student_name ? `[Student: ${conv.student_name}]` : ''}`;
+      if (paramsInput) paramsInput.value = conv?.student_name ? conv.student_name : "";
+      modal.style.display = "flex";
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+  }
+
+  closeTemplateModal() {
+    const modal = document.getElementById("send-template-modal");
+    if (modal) modal.style.display = "none";
+  }
+
+  async handleSendTemplate(e) {
+    e.preventDefault();
+    const waId = document.getElementById("template-modal-wa-id")?.value;
+    const templateSelect = document.getElementById("template-name-select")?.value;
+    const customInput = document.getElementById("custom-template-name-input")?.value;
+    const paramsInput = document.getElementById("template-params-input")?.value;
+    const submitBtn = document.getElementById("submit-send-template-btn");
+
+    const templateName = templateSelect === "custom" ? customInput.trim() : templateSelect;
+    if (!waId || !templateName) {
+      this.showToast("Please specify recipient and template name.", "danger");
+      return;
+    }
+
+    const params = paramsInput ? paramsInput.split(",").map(p => p.trim()).filter(Boolean) : [];
+
+    try {
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i data-lucide="loader" style="animation:spin 1s linear infinite; width:14px; height:14px;"></i> Sending...';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+      }
+
+      await db.sendTemplateReply(waId, templateName, params);
+      this.showToast("Template message sent successfully!", "success");
+      this.closeTemplateModal();
+      await this.loadReplies();
+    } catch (err) {
+      this.showToast(`Failed to send template: ${err.message || 'Server error'}`, "danger");
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i data-lucide="send"></i> Send Template';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+      }
+    }
+  }
+
+  // ── Resources Management ─────────────────────────────
+  async loadAdminResources() {
+    const container = document.getElementById("admin-resources-list-container");
+    container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:30px;"><i data-lucide="loader" style="animation:spin 1s linear infinite; width:18px; height:18px;"></i> Loading study resources...</p>';
+    lucide.createIcons();
+
+    try {
+      const resources = await db.getAdminResources();
+
+      if (!resources || resources.length === 0) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 40px 20px;">
+            <i data-lucide="folder-open" style="width: 42px; height: 42px; color: var(--text-muted); margin-bottom: 10px; opacity: 0.5;"></i>
+            <h3 style="font-size: 1rem; color: var(--text-main); margin-bottom: 4px;">No Study Resources Uploaded Yet</h3>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">Upload notes, PDFs, or assignments to share them with students.</p>
+            <button class="btn btn-primary" id="empty-upload-resource-btn">
+              <i data-lucide="upload-cloud"></i> Upload First Resource
+            </button>
+          </div>`;
+        lucide.createIcons();
+        document.getElementById("empty-upload-resource-btn")?.addEventListener("click", () => {
+          document.getElementById("upload-resource-modal").classList.add("active");
         });
-      });
+        return;
+      }
 
-      // Attach delete handlers
-      container.querySelectorAll('.reply-delete-btn').forEach(btn => {
+      function formatFileSize(bytes) {
+        if (!bytes || isNaN(bytes)) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let size = bytes;
+        let i = 0;
+        while (size >= 1024 && i < units.length - 1) {
+          size /= 1024;
+          i++;
+        }
+        return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+      }
+
+      container.innerHTML = `
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Title / File</th>
+                <th>Target Audience</th>
+                <th>Size</th>
+                <th>Date</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${resources.map(item => {
+        const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+        const sizeStr = formatFileSize(item.sizeBytes);
+        let audienceLabel = 'All Students';
+        if (item.visibilityType === 'combination') {
+          audienceLabel = `Streams: ${(item.targetCombinations || []).join(', ')}`;
+        } else if (item.visibilityType === 'student') {
+          audienceLabel = `Students: #${(item.targetStudentIds || []).join(', #')}`;
+        }
+
+        return `
+                  <tr>
+                    <td>
+                      <strong style="color: var(--text-main); font-size: 0.9rem;">${this.escapeHtml(item.title)}</strong>
+                      ${item.description ? `<div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${this.escapeHtml(item.description)}</div>` : ''}
+                      <div style="font-size: 0.74rem; color: var(--primary-hover); margin-top: 2px;">📁 ${this.escapeHtml(item.originalFileName)}</div>
+                    </td>
+                    <td>
+                      <span class="badge-status paid" style="font-size: 0.72rem; padding: 2px 8px;">${this.escapeHtml(audienceLabel)}</span>
+                    </td>
+                    <td style="font-size: 0.8rem; color: var(--text-muted);">${sizeStr}</td>
+                    <td style="font-size: 0.8rem; color: var(--text-muted);">${dateStr}</td>
+                    <td style="text-align: right;">
+                      <div style="display: inline-flex; gap: 6px;">
+                        <a href="/api/admin/resources/${encodeURIComponent(item.id)}/download" target="_blank" download class="btn btn-secondary btn-sm" style="padding: 4px 8px; text-decoration: none; font-size: 0.78rem;" title="Download / Preview">
+                          <i data-lucide="download" style="width: 14px; height: 14px;"></i>
+                        </a>
+                        <button class="btn btn-secondary btn-sm delete-resource-btn" data-id="${item.id}" style="padding: 4px 8px; font-size: 0.78rem; color: var(--danger, #ef4444); border-color: rgba(239, 68, 68, 0.3);" title="Delete Resource">
+                          <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>`;
+      }).join('')}
+            </tbody>
+          </table>
+        </div>`;
+
+      // Wire delete buttons
+      container.querySelectorAll('.delete-resource-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
-          const id = e.target.dataset.id;
-          if (!confirm('Delete this reply?')) return;
-          try {
-            await db.deleteReply(id);
-            this.showToast('Reply deleted.', 'success');
-            await this.loadReplies();
-          } catch (err) {
-            this.showToast('Failed to delete reply.', 'danger');
+          const resId = e.currentTarget.getAttribute('data-id');
+          if (confirm('Are you sure you want to delete this study resource? Students will no longer be able to download it.')) {
+            try {
+              await db.deleteAdminResource(resId);
+              this.showToast('Resource deleted successfully.');
+              await this.loadAdminResources();
+            } catch (err) {
+              this.showToast(err.message || 'Failed to delete resource.', 'danger');
+            }
           }
         });
       });
 
       lucide.createIcons();
-    } catch (err) {
-      container.innerHTML = `<p style="text-align:center; color:var(--danger, #ef4444); padding:30px;">Failed to load replies. ${err.message || ''}</p>`;
-      console.error('Failed to load WhatsApp replies:', err);
+    } catch (error) {
+      container.innerHTML = `<p style="text-align:center; color:var(--danger, #ef4444); padding:30px;">Failed to load study resources: ${this.escapeHtml(error.message)}</p>`;
     }
   }
 

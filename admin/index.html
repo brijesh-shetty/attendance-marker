@@ -44,6 +44,23 @@
     </div>
   </div>
 
+  <div id="batch-overlay" class="login-overlay" style="display:none; z-index:20;">
+    <div class="login-card" style="max-width:760px; width:calc(100% - 28px);">
+      <h2 style="font-size:1.2rem; text-align:center;">Select Batch Workspace</h2>
+      <p style="color:var(--text-muted); font-size:.82rem; text-align:center;">Choose a batch before opening students, attendance, tests, or fees.</p>
+      <div id="batch-list-container" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-top:16px;"></div>
+      <div class="card" style="margin-top:14px; padding:12px;">
+        <strong>Add New Batch</strong>
+        <form id="batch-form" style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px;">
+          <input id="batch-number-input" class="input-field" type="number" min="1" placeholder="Batch number" required>
+          <input id="batch-year-input" class="input-field" type="number" min="2000" max="2100" placeholder="Academic year" required>
+          <select id="batch-grade-input" class="select-field" required><option value="12">Grade 12</option><option value="11">Grade 11</option></select>
+          <button class="btn btn-primary" type="submit" style="grid-column:1/-1;">Create Batch</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <div id="app-container">
     
     <!-- Top Header -->
@@ -55,6 +72,8 @@
         </a>
       </div>
       <div style="display: flex; gap: 8px; align-items: center;">
+        <span id="active-batch-label" style="font-size:.75rem; color:var(--text-muted); max-width:190px; text-align:right;"></span>
+        <button class="settings-btn" id="change-batch-btn" title="Change Batch"><i data-lucide="layers"></i></button>
         <button class="settings-btn" id="lock-portal-btn" title="Logout & Lock Portal">
           <i data-lucide="log-out"></i>
         </button>
@@ -264,6 +283,7 @@
                 <i data-lucide="message-square"></i> Send SMS
               </button>
             </div>
+            <div id="attendance-reminder-log" style="margin-top:10px;"></div>
           </div>
         </div>
 
@@ -403,20 +423,20 @@
         </div>
       </section>
 
-      <!-- 5. PAYMENTS VIEW (NEW) -->
+      <!-- 5. PAYMENTS VIEW -->
       <section id="payments-view" class="view-section">
         <h2>Fee Payments Manager</h2>
         <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Select a student to add each payment received. Fee status is calculated automatically from the total fee and payment history.</p>
 
         <div class="card">
-          <div style="margin-bottom:14px;">
-            <label for="bulk-fee-template-select" style="font-size:.8rem; color:var(--text-muted);">Template for all students with a balance</label>
-            <div style="display:flex; gap:8px; margin-top:6px;">
-              <select id="bulk-fee-template-select" class="select-field" style="flex:1; font-size:.82rem;"><option value="balance_reminder">Balance reminder</option><option value="fee_reminder">Fee reminder</option></select>
-              <button class="btn btn-secondary" id="copy-all-due-messages-btn" style="padding:8px 12px;">Copy All Due</button>
-              <button class="btn btn-primary" id="send-all-due-messages-btn" disabled title="Enable only after the WhatsApp template is approved and connected">Send All Due</button>
-            </div>
-            <p id="bulk-fee-message-help" style="font-size:.72rem; color:var(--text-muted); margin:7px 0 0;">Previews are copied for review; no WhatsApp messages are sent yet.</p>
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+            <label for="payment-fee-filter" style="font-size:.8rem; color:var(--text-muted); margin:0;">Show</label>
+            <select id="payment-fee-filter" class="select-field" style="font-size:.85rem; min-width:200px;">
+              <option value="all">All students</option>
+              <option value="due-over-50">Due more than 50%</option>
+              <option value="due-under-50">Due less than 50%</option>
+            </select>
+            <span id="payment-filter-count" style="font-size:.75rem; color:var(--text-muted); margin-left:auto;"></span>
           </div>
 
           <div id="payments-list-container">
@@ -424,49 +444,87 @@
           </div>
           <div id="payment-student-detail-container" style="display:none; margin-top:14px;"></div>
         </div>
-      </section>
 
-      <!-- 6. BROADCAST ANNOUNCEMENTS VIEW -->
-      <section id="broadcast-view" class="view-section">
-        <h2>Broadcast Announcements</h2>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">General announcements are disabled until a protected server-side messaging provider is configured.</p>
+        <!-- Bulk fee reminder sender -->
+        <div class="card" style="margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <strong style="font-size:.95rem;">Send fee reminders</strong>
+            <span id="fee-reminder-selection-count" style="font-size:.72rem; color:var(--text-muted);">0 selected</span>
+          </div>
+          <p style="font-size:.75rem; color:var(--text-muted); margin:0 0 10px;">Pick students below (or use “Select all in filter”), enter your approved Meta template name, and hit Send. Each parent gets a WhatsApp template with their own name, total fee, received, and balance.</p>
 
-        <div class="card">
-          <div class="input-group">
-            <label for="broadcast-subject-select">Target Class Stream</label>
-            <select id="broadcast-subject-select" class="select-field">
-              <option value="all">All Registered Students</option>
-              <option value="CS">CS Class Students</option>
-              <option value="BIO">Biology Class Students</option>
-              <option value="ELE">Electronics Class Students</option>
-            </select>
+          <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+            <button class="btn btn-secondary" id="fee-reminder-select-filter-btn" style="padding:7px 12px; font-size:.8rem;">Select all in filter</button>
+            <button class="btn btn-secondary" id="fee-reminder-clear-btn" style="padding:7px 12px; font-size:.8rem;">Clear selection</button>
           </div>
 
-          <div class="input-group">
-            <label for="broadcast-message-input">Announcement Message</label>
-            <textarea id="broadcast-message-input" class="textarea-field" rows="5" placeholder="Dear Parent, please note there will be a special test conducted this Sunday. - Galaxy Academy"></textarea>
-          </div>
+          <div id="fee-reminder-recipients-list" style="max-height:220px; overflow-y:auto; border:1px solid var(--border-color); border-radius:8px; padding:6px;"></div>
 
-          <button class="btn btn-primary btn-full" id="send-broadcast-btn" disabled title="Server-side SMS integration required">
-            <i data-lucide="lock"></i> Server-side Messaging Required
-          </button>
+          <div style="display:grid; grid-template-columns:1fr auto; gap:8px; margin-top:12px; align-items:end;">
+            <div class="input-group" style="margin:0;">
+              <label for="fee-reminder-template-input" style="font-size:.8rem;">Template name (must be approved on Meta)</label>
+              <input type="text" id="fee-reminder-template-input" class="input-field" placeholder="e.g. fee_reminder" value="fee_reminder" autocomplete="off">
+            </div>
+            <button class="btn btn-primary" id="fee-reminder-send-btn" style="padding:11px 16px; background:#25D366; border-color:#25D366;">
+              <i data-lucide="send" style="width:14px; height:14px;"></i> Send
+            </button>
+          </div>
+        </div>
+
+        <!-- Today's reminder log -->
+        <div class="card" style="margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">
+            <strong style="font-size:.95rem;">Today’s reminder log</strong>
+            <button class="btn btn-secondary" id="fee-reminder-log-refresh-btn" style="padding:5px 10px; font-size:.75rem;">Refresh</button>
+          </div>
+          <div id="fee-reminder-log-container">
+            <p style="color:var(--text-muted); font-size:.8rem; margin:0;">No reminders sent today.</p>
+          </div>
+        </div>
+
+        <!-- Batch fees summary -->
+        <div class="card" style="margin-top:14px;">
+          <strong style="font-size:.95rem; display:block; margin-bottom:10px;">Batch fees summary</strong>
+          <div id="fees-total-summary" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px;">
+            <!-- Rendered by JS -->
+          </div>
         </div>
       </section>
 
-      <!-- 7. WHATSAPP REPLIES VIEW -->
+      <!-- 6. WHATSAPP PARENT CONVERSATIONS (LIST) -->
       <section id="replies-view" class="view-section">
-        <h2><i data-lucide="message-circle" style="width:20px; height:20px; vertical-align: text-bottom; color: #25D366;"></i> Parent Replies</h2>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Incoming WhatsApp messages from parents. Auto-matched to students by phone number.</p>
-
-        <div style="display:flex; gap:8px; margin-bottom:14px; align-items:center; flex-wrap: wrap;">
-          <button class="btn btn-secondary" id="refresh-replies-btn" style="padding:8px 14px; font-size:0.82rem;">
-            <i data-lucide="refresh-cw" style="width:14px; height:14px;"></i> Refresh
-          </button>
-          <span id="replies-count" style="font-size:0.78rem; color:var(--text-muted);"></span>
+        <div class="replies-header">
+          <div>
+            <h2 style="margin:0;"><i data-lucide="message-circle" style="width:20px; height:20px; vertical-align: text-bottom; color: #25D366;"></i> Parent Conversations</h2>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin:4px 0 0;">Tap a conversation to open the chat and reply.</p>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button class="btn btn-secondary" id="refresh-replies-btn" style="padding:8px 14px; font-size:0.82rem;">
+              <i data-lucide="refresh-cw" style="width:14px; height:14px;"></i> Refresh
+            </button>
+            <span id="replies-count" style="font-size:0.78rem; color:var(--text-muted);"></span>
+          </div>
         </div>
 
-        <div class="card" id="replies-list-container" style="padding: 0;">
-          <p style="text-align:center; color:var(--text-muted); padding:30px;">Loading replies...</p>
+        <div class="card" style="padding:0; overflow:hidden;">
+          <div id="conversations-list">
+            <p style="text-align:center; color:var(--text-muted); padding:30px;">Loading conversations...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. RESOURCES / FILES VIEW -->
+      <section id="resources-view" class="view-section">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h2><i data-lucide="folder-down" style="width:20px; height:20px; vertical-align: text-bottom; color: var(--primary);"></i> Study Resources & Files</h2>
+          <button class="btn btn-primary" id="open-upload-resource-modal-btn">
+            <i data-lucide="upload-cloud"></i> Upload File
+          </button>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Upload study materials, notes, assignments, or PDFs for students to download.</p>
+
+        <div class="card" id="admin-resources-list-container" style="padding: 0;">
+          <p style="text-align:center; color:var(--text-muted); padding:30px;">Loading study resources...</p>
         </div>
       </section>
 
@@ -494,9 +552,9 @@
         <i data-lucide="credit-card"></i>
         <span>Fees</span>
       </div>
-      <div class="nav-item" data-view="broadcast">
-        <i data-lucide="megaphone"></i>
-        <span>Announce</span>
+      <div class="nav-item" data-view="resources">
+        <i data-lucide="folder-down"></i>
+        <span>Files</span>
       </div>
       <div class="nav-item" data-view="replies">
         <i data-lucide="message-circle"></i>
@@ -504,7 +562,107 @@
       </div>
     </nav>
 
+    <!-- Full-screen Parent Conversation (Chat) Screen -->
+    <div id="chat-screen" class="chat-screen no-print" aria-hidden="true">
+      <header class="chat-screen-header">
+        <button type="button" class="chat-icon-btn" id="chat-back-btn" aria-label="Back to conversations">
+          <i data-lucide="arrow-left"></i>
+        </button>
+        <div class="chat-peer">
+          <div class="chat-peer-top">
+            <span id="active-contact-name" class="chat-peer-name">Parent</span>
+            <span id="active-student-badge" class="chat-student-badge">Student</span>
+          </div>
+          <span id="active-contact-phone" class="chat-peer-phone">+91...</span>
+        </div>
+        <button type="button" class="chat-icon-btn" id="chat-refresh-btn" aria-label="Refresh conversation">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+      </header>
+
+      <!-- 24-Hour Customer Service Window status & live countdown -->
+      <div id="window-status-badge-container" class="chat-window-status"></div>
+
+      <!-- Message History -->
+      <div id="thread-messages-list" class="chat-messages"></div>
+
+      <!-- Composer -->
+      <div class="chat-composer">
+        <div id="chat-expired-alert" class="chat-expired-alert" style="display:none;">
+          <span><i data-lucide="alert-triangle" style="width:15px; height:15px; vertical-align:middle; margin-right:4px;"></i> <strong>24-hour window expired</strong> — send an approved template to re-engage.</span>
+          <button class="btn btn-primary" id="trigger-template-modal-btn" style="padding:6px 12px; font-size:0.75rem; background:#25D366; border-color:#25D366; white-space:nowrap;">
+            <i data-lucide="send" style="width:13px; height:13px;"></i> Template
+          </button>
+        </div>
+
+        <form id="send-reply-form" class="chat-reply-form">
+          <input type="text" id="reply-text-input" class="chat-input" placeholder="Type your reply message..." autocomplete="off">
+          <button type="button" class="chat-icon-btn chat-template-btn" id="open-template-modal-direct-btn" aria-label="Send Template Message" title="Send Template Message">
+            <i data-lucide="file-text"></i>
+          </button>
+          <button type="submit" class="chat-send-btn" id="send-reply-btn" aria-label="Send reply">
+            <i data-lucide="send"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+
     <!-- Modals Layer -->
+
+    <!-- Upload Resource Modal -->
+    <div class="modal" id="upload-resource-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Upload Study Resource / Note</h3>
+          <span class="modal-close" id="upload-resource-modal-close"><i data-lucide="x"></i></span>
+        </div>
+        <form id="upload-resource-form">
+          <div class="input-group">
+            <label for="resource-file-input">Select File (PDF, Image, DOCX, TXT - Max 750 KB) *</label>
+            <input type="file" id="resource-file-input" class="input-field" required accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.txt">
+          </div>
+          <div class="input-group">
+            <label for="resource-title-input">Title / Subject *</label>
+            <input type="text" id="resource-title-input" class="input-field" placeholder="e.g. Physics Unit 3 Notes" required>
+          </div>
+          <div class="input-group">
+            <label for="resource-desc-input">Description (Optional)</label>
+            <textarea id="resource-desc-input" class="input-field" rows="3" placeholder="Brief notes or instructions for students..."></textarea>
+          </div>
+          <div class="input-group">
+            <label for="resource-visibility-select">Target Audience / Visibility *</label>
+            <select id="resource-visibility-select" class="select-field">
+              <option value="all">All Students</option>
+              <option value="combination">Specific Combination / Stream</option>
+              <option value="student">Specific Student IDs</option>
+            </select>
+          </div>
+
+          <!-- Target Combination Checkboxes -->
+          <div id="target-combination-group" class="input-group" style="display: none;">
+            <label style="margin-bottom: 6px; font-size: 0.85rem; font-weight: 600;">Select Target Combinations *</label>
+            <div style="display: flex; gap: 14px; flex-wrap: wrap; background: rgba(0,0,0,0.1); padding: 10px; border-radius: var(--radius-sm);">
+              <label style="font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="res-comb" value="CS"> CS (Comp Sci)</label>
+              <label style="font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="res-comb" value="BIO"> BIO (Biology)</label>
+              <label style="font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="res-comb" value="ELE"> ELE (Electronics)</label>
+            </div>
+          </div>
+
+          <!-- Target Student IDs Input -->
+          <div id="target-student-group" class="input-group" style="display: none;">
+            <label for="resource-student-ids-input" style="font-size: 0.85rem; font-weight: 600;">Target Student IDs (Comma-separated) *</label>
+            <input type="text" id="resource-student-ids-input" class="input-field" placeholder="e.g. 1, 4, 12">
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <button type="button" class="btn btn-secondary" style="flex: 1;" id="upload-resource-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary" style="flex: 1;" id="upload-resource-submit">
+              <i data-lucide="upload"></i> Upload
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <!-- Add/Edit Student Modal -->
     <div class="modal" id="student-modal">
@@ -693,7 +851,15 @@
             <label for="admin-template-name-input" style="font-size: 0.82rem; font-weight: 600; color: var(--text-main); display: flex; justify-content: space-between;">
               <span>Meta Template Name</span>
             </label>
-            <input type="text" id="admin-template-name-input" class="input-field" placeholder="e.g. admin_absentee_alert" value="admin_absentee_alert" style="font-family: monospace; font-size: 0.85rem; height: 38px;">
+            <input type="text" id="admin-template-name-input" class="input-field" placeholder="Use server default, or enter approved template name" style="font-family: monospace; font-size: 0.85rem; height: 38px;">
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label for="admin-report-template" style="font-size: 0.85rem; font-weight: 600; color: var(--text-main); display: flex; justify-content: space-between; align-items: center;">
+            <span>Report Message (Editable)</span>
+            <button type="button" class="btn btn-secondary btn-sm" id="reset-admin-template-btn" style="font-size: 0.72rem; padding: 2px 8px; font-weight: normal;">
+              <i data-lucide="rotate-ccw" style="width: 12px; height: 12px;"></i> Reset Text
           </div>
         </div>
 
@@ -718,6 +884,54 @@
             <i data-lucide="message-circle"></i> Open WhatsApp
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- Send WhatsApp Template Modal -->
+    <div class="modal" id="send-template-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; padding:16px;">
+      <div class="card" style="width:100%; max-width:480px; padding:24px; position:relative;">
+        <button type="button" id="close-send-template-modal-btn" style="position:absolute; top:16px; right:16px; background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:1.2rem;">&times;</button>
+        <h3 style="margin-top:0; display:flex; align-items:center; gap:8px;">
+          <i data-lucide="send" style="color:#25D366; width:20px; height:20px;"></i>
+          Send WhatsApp Template
+        </h3>
+        <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:16px;">
+          Meta allows sending pre-approved templates anytime, even outside the 24-hour customer service window.
+        </p>
+
+        <form id="send-template-form">
+          <input type="hidden" id="template-modal-wa-id">
+          <div class="input-group" style="margin-bottom:12px;">
+            <label style="font-size:0.82rem; font-weight:600;">Recipient</label>
+            <input type="text" id="template-modal-recipient-display" class="input-field" readonly style="background:var(--bg-secondary); font-size:0.85rem;">
+          </div>
+
+          <div class="input-group" style="margin-bottom:12px;">
+            <label for="template-name-select" style="font-size:0.82rem; font-weight:600;">Template Name</label>
+            <select id="template-name-select" class="select-field" style="font-size:0.85rem;">
+              <option value="reengagement_reply">reengagement_reply (Re-engagement Prompt)</option>
+              <option value="absence_notification">absence_notification (Absence Alert)</option>
+              <option value="custom">Custom Template Name...</option>
+            </select>
+          </div>
+
+          <div class="input-group" id="custom-template-name-group" style="display:none; margin-bottom:12px;">
+            <label for="custom-template-name-input" style="font-size:0.82rem; font-weight:600;">Custom Template Name</label>
+            <input type="text" id="custom-template-name-input" class="input-field" placeholder="e.g. reengagement_reply" style="font-size:0.85rem;">
+          </div>
+
+          <div class="input-group" style="margin-bottom:16px;">
+            <label for="template-params-input" style="font-size:0.82rem; font-weight:600;">Template Parameters (comma separated optional body variables)</label>
+            <input type="text" id="template-params-input" class="input-field" placeholder="e.g. Rahul, Physics Class" style="font-size:0.85rem;">
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button type="button" class="btn btn-secondary" id="cancel-send-template-modal-btn">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="submit-send-template-btn" style="background:#25D366; border-color:#25D366;">
+              <i data-lucide="send"></i> Send Template
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 

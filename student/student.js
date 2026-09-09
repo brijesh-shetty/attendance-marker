@@ -6,6 +6,18 @@ function escapeHtml(value) {
   }[char]));
 }
 
+function formatFileSize(bytes) {
+  if (!bytes || isNaN(bytes)) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let i = 0;
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
 class StudentPortalController {
   constructor() {
     this.currentStudent = null;
@@ -14,7 +26,8 @@ class StudentPortalController {
       "student-dashboard": document.getElementById("student-dashboard-view"),
       "student-attendance": document.getElementById("student-attendance-view"),
       "student-marks": document.getElementById("student-marks-view"),
-      "student-fees": document.getElementById("student-fees-view")
+      "student-fees": document.getElementById("student-fees-view"),
+      "student-resources": document.getElementById("student-resources-view")
     };
     this.navItems = document.querySelectorAll(".bottom-nav .nav-item");
     this.toastContainer = document.getElementById("toast-container");
@@ -48,7 +61,7 @@ class StudentPortalController {
     this.hideLoginScreen();
     document.getElementById("display-student-name").textContent = student.name;
     document.getElementById("dash-welcome-name").textContent = student.name.split(" ")[0];
-    document.getElementById("display-student-id").textContent = `#${student.id}`;
+    document.getElementById("display-student-id").textContent = `#${student.number || student.id}`;
     document.getElementById("display-student-comb").textContent = student.combination || "PU";
     document.getElementById("student-avatar-initials").textContent = student.name.charAt(0).toUpperCase();
     this.switchView("student-dashboard");
@@ -93,6 +106,7 @@ class StudentPortalController {
       if (viewName === "student-dashboard") await this.loadDashboardData();
       if (viewName === "student-attendance") await this.loadAttendanceHistory();
       if (viewName === "student-marks") await this.loadMarksList();
+      if (viewName === "student-resources") await this.loadResourcesList();
       if (viewName === "student-fees") await this.loadFeesList();
       lucide.createIcons();
     } catch (error) {
@@ -118,10 +132,9 @@ class StudentPortalController {
           </div>`).join('')
       : '<p style="color: var(--text-muted); font-style: italic;">No attendance recorded yet.</p>';
 
-    const currentMonth = new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric' }).format(new Date());
-    const currentFee = payments[currentMonth] || { status: 'due' };
-    const feeBadge = currentFee.status === 'paid' ? 'paid' : currentFee.status === 'partial' ? 'partial' : 'due';
-    document.getElementById("stat-student-fee-badge").innerHTML = `<span class="badge-status ${feeBadge}">${feeBadge.toUpperCase()}</span>`;
+    const feeTotal = Number(payments.totalFee) || 65000;
+    const feePaid = (payments.transactions || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    document.getElementById("stat-student-fee-badge").innerHTML = `<span class="badge-status ${feePaid >= feeTotal ? 'paid' : 'due'}">${feePaid >= feeTotal ? 'PAID' : `DUE ₹${Math.max(feeTotal - feePaid, 0).toLocaleString('en-IN')}`}</span>`;
 
     const latestTestDiv = document.getElementById("dash-latest-test-info");
     if (!tests.length) {
@@ -177,29 +190,101 @@ class StudentPortalController {
     }).join('');
   }
 
+  async loadResourcesList() {
+    const container = document.getElementById("student-resources-list-container");
+    const resources = await db.getStudentResources();
+
+    if (!resources || resources.length === 0) {
+      container.innerHTML = `
+        <div class="card" style="text-align: center; padding: 40px 20px;">
+          <i data-lucide="folder-open" style="width: 42px; height: 42px; color: var(--text-muted); margin-bottom: 10px;"></i>
+          <h3 style="font-size: 1rem; color: var(--text-main); margin-bottom: 4px;">No Study Resources Available</h3>
+          <p style="font-size: 0.8rem; color: var(--text-muted);">Notes and study materials uploaded by your teacher will appear here.</p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = resources.map(item => {
+      const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      const sizeStr = formatFileSize(item.sizeBytes);
+      const isPdf = item.mimeType?.includes('pdf') || item.originalFileName?.toLowerCase().endsWith('.pdf');
+      const iconName = isPdf ? 'file-text' : 'file';
+
+      return `
+        <div class="card" style="margin-bottom: 12px; border-left: 4px solid var(--student-accent); display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+          <div style="flex: 1; min-width: 0;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+              <i data-lucide="${iconName}" style="width: 18px; height: 18px; color: var(--student-accent); flex-shrink: 0;"></i>
+              <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--text-main); margin: 0; word-break: break-word;">${escapeHtml(item.title)}</h4>
+            </div>
+            ${item.description ? `<p style="font-size: 0.82rem; color: var(--text-muted); margin: 0 0 6px 0; word-break: break-word;">${escapeHtml(item.description)}</p>` : ''}
+            <div style="font-size: 0.75rem; color: var(--text-muted); display: flex; gap: 12px; flex-wrap: wrap;">
+              <span>📁 ${escapeHtml(item.originalFileName)}</span>
+              <span>💾 ${sizeStr}</span>
+              ${dateStr ? `<span>📅 ${dateStr}</span>` : ''}
+            </div>
+          </div>
+          <a href="/api/student/resources/${encodeURIComponent(item.id)}/download" target="_blank" download class="btn btn-primary" style="padding: 8px 14px; font-size: 0.82rem; background-color: var(--student-accent); border-color: var(--student-accent); text-decoration: none; display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+            <i data-lucide="download" style="width: 14px; height: 14px;"></i> Download
+          </a>
+        </div>`;
+    }).join('');
+  }
+
   async loadFeesList() {
     const container = document.getElementById("student-fees-list-container");
     const payments = await db.getStudentPayments();
-    const formatter = new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric' });
-    const today = new Date();
-    const months = Array.from({ length: 6 }, (_, offset) => formatter.format(new Date(today.getFullYear(), today.getMonth() + offset, 1)));
-    container.innerHTML = months.map(month => {
-      const record = payments[month] || { status: 'due', amount: '', notes: '' };
-      const statusClass = record.status === 'paid' ? 'paid' : record.status === 'partial' ? 'partial' : 'due';
-      const statusLabel = record.status === 'paid' ? 'PAID ✅' : record.status === 'partial' ? 'PARTIAL 🟡' : 'FEE DUE 🔴';
-      return `<div class="fee-card"><div class="fee-card-info"><h4>${escapeHtml(month)} Tuition Fee</h4><p>${record.amount ? `Amount: ₹${escapeHtml(record.amount)}` : 'Monthly Coaching Fee'}${record.notes ? ` • ${escapeHtml(record.notes)}` : ''}</p></div><span class="badge-status ${statusClass}">${statusLabel}</span></div>`;
-    }).join('');
+    const totalFee = Number(payments.totalFee) || 65000;
+    const transactions = Array.isArray(payments.transactions) ? payments.transactions : [];
+    const paid = transactions.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    const due = Math.max(totalFee - paid, 0);
+    container.innerHTML = `<div class="card" style="border-left:4px solid ${due ? 'var(--status-due)' : 'var(--status-paid)'}; margin-bottom:12px;"><div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px;"><div><small>Total fee</small><strong style="display:block;">₹${totalFee.toLocaleString('en-IN')}</strong></div><div><small>Received</small><strong style="display:block; color:var(--status-paid);">₹${paid.toLocaleString('en-IN')}</strong></div><div><small>Due</small><strong style="display:block; color:${due ? 'var(--status-due)' : 'var(--status-paid)'};">₹${due.toLocaleString('en-IN')}</strong></div></div></div>${transactions.length ? transactions.slice().sort((a,b) => String(b.date).localeCompare(String(a.date))).map(item => `<div class="fee-card"><div class="fee-card-info"><h4>Payment received</h4><p>Date: ${escapeHtml(item.date)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</p></div><strong style="color:var(--status-paid);">₹${(Number(item.amount) || 0).toLocaleString('en-IN')}</strong></div>`).join('') : '<p style="color:var(--text-muted);">No payment entries recorded yet.</p>'}`;
   }
 
   initEventListeners() {
     this.navItems.forEach(item => item.addEventListener("click", () => this.switchView(item.getAttribute("data-view"))));
 
+    const previewEl = document.getElementById("student-login-preview");
+    const updateLoginPreview = () => {
+      if (!previewEl) return;
+      const year = document.getElementById("student-year-input")?.value.trim();
+      const grade = document.getElementById("student-grade-input")?.value;
+      const batch = document.getElementById("student-batch-input")?.value.trim();
+      const number = document.getElementById("student-number-input")?.value.trim();
+      previewEl.textContent = (year && grade && batch && number)
+        ? `${year}-${grade}-${batch}__${number}`
+        : "year-grade-batch-number";
+    };
+    ["student-year-input", "student-grade-input", "student-batch-input", "student-number-input"]
+      .forEach(id => document.getElementById(id)?.addEventListener("input", updateLoginPreview));
+    updateLoginPreview();
+
     document.getElementById("student-login-form").addEventListener("submit", async event => {
       event.preventDefault();
       try {
-        const id = document.getElementById("student-id-input").value.trim();
+        const legacyId = document.getElementById("student-id-input")?.value.trim();
         const password = document.getElementById("student-password-input").value;
-        const result = await db.studentLogin(id, password);
+        const year = document.getElementById("student-year-input")?.value.trim();
+        const grade = document.getElementById("student-grade-input")?.value;
+        const batchNumber = document.getElementById("student-batch-input")?.value.trim();
+        const number = document.getElementById("student-number-input")?.value.trim();
+
+        // Prefer the composed batch coordinates; fall back to the legacy Student
+        // ID field for students that were created before batch isolation.
+        const payload = { password };
+        if (legacyId) {
+          payload.studentId = legacyId;
+        } else {
+          if (!year || !grade || !batchNumber || !number) {
+            throw new Error("Please fill in batch number, year, grade and student number.");
+          }
+          payload.year = year;
+          payload.grade = grade;
+          payload.batchNumber = batchNumber;
+          payload.number = number;
+        }
+
+        const result = await db.studentLogin(payload);
         this.loginSuccess(result.student, result.mustChangePassword);
         this.showToast(`Welcome back, ${result.student.name}!`);
       } catch (error) {

@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const notificationService = require('./services/notification');
 
 // Get phone number from command line args or use prompt

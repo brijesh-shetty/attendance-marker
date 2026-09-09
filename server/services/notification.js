@@ -2,9 +2,22 @@
 
 class NotificationService {
   constructor() {
-    this.provider = process.env.SMS_PROVIDER || 'fast2sms';
-    this.fast2smsKey = process.env.FAST2SMS_API_KEY || '';
+    // Both values are read lazily via getters below so this module works even
+    // if it happens to be required before dotenv has populated process.env.
   }
+
+  // Prefer WhatsApp when its credentials are present, regardless of what
+  // SMS_PROVIDER says — that way an admin who set up WhatsApp doesn't get
+  // silently routed to Fast2SMS just because SMS_PROVIDER is missing.
+  get provider() {
+    const explicit = (process.env.SMS_PROVIDER || '').toLowerCase();
+    if (explicit === 'whatsapp' || explicit === 'fast2sms') return explicit;
+    if (process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID) return 'whatsapp';
+    if (process.env.FAST2SMS_API_KEY) return 'fast2sms';
+    return 'stub';
+  }
+
+  get fast2smsKey() { return process.env.FAST2SMS_API_KEY || ''; }
 
   /**
    * Send notification to a student's parent phone
@@ -132,6 +145,69 @@ class NotificationService {
   }
 
   /**
+   * Send any approved WhatsApp template to any recipient. Reusable by
+   * absence alerts, TradingView forwarding, etc.
+   * @param {object} opts
+   * @param {string} opts.to Recipient in E.164 digits (10-digit Indian numbers
+   *   are auto-prefixed with 91).
+   * @param {string} opts.templateName Meta-approved template name.
+   * @param {Array<string|number>} [opts.params=[]] Body {{1}}, {{2}} … values.
+   * @param {string} [opts.language='en']
+   */
+  async sendTemplate({ to, templateName, params = [], language = 'en' }) {
+    const waToken = process.env.WHATSAPP_TOKEN;
+    const waPhoneId = process.env.WHATSAPP_PHONE_ID;
+    if (!waToken || !waPhoneId) {
+      return { success: false, error: 'WhatsApp credentials missing (WHATSAPP_TOKEN or WHATSAPP_PHONE_ID).' };
+    }
+    if (!to) return { success: false, error: 'Recipient phone is required.' };
+    if (!templateName) return { success: false, error: 'Template name is required.' };
+
+    let cleanPhone = String(to).replace(/[^0-9]/g, '');
+    if (cleanPhone.length === 10) cleanPhone = '91' + cleanPhone;
+
+    const url = `https://graph.facebook.com/v20.0/${waPhoneId}/messages`;
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: language }
+      }
+    };
+    if (params.length) {
+      payload.template.components = [{
+        type: 'body',
+        parameters: params.map(value => ({ type: 'text', text: String(value) }))
+      }];
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${waToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (response.ok && data.messages) {
+        return { success: true, messageId: data.messages[0].id, data };
+      }
+      return {
+        success: false,
+        error: data.error?.message || 'WhatsApp API request failed.',
+        code: data.error?.code,
+        data
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Broadcast WhatsApp notifications to a list of absentees
    * @param {Array} absentees Array of { phone, studentName, date, contactNumber }
    */
@@ -162,6 +238,7 @@ class NotificationService {
     const templateName = (typeof data === 'object' && data.templateName)
       ? data.templateName
       : (process.env.WHATSAPP_ADMIN_TEMPLATE || 'admin_absentee_alert');
+    const templateLanguage = process.env.WHATSAPP_ADMIN_TEMPLATE_LANGUAGE || 'en';
 
     if (!waToken || !waPhoneId) {
       const message = typeof data === 'string' ? data : data.text || '';
@@ -185,7 +262,7 @@ class NotificationService {
         type: 'template',
         template: {
           name: templateName,
-          language: { code: 'en' },
+          language: { code: templateLanguage },
           components: [
             {
               type: 'body',
@@ -218,7 +295,10 @@ class NotificationService {
         body: JSON.stringify(payload)
       });
       const resData = await response.json();
-      return { success: response.ok && Boolean(resData.messages), data: resData };
+      if (response.ok && resData.messages) return { success: true, data: resData };
+      const error = resData?.error?.message || 'WhatsApp API request failed.';
+      console.error(`Admin WhatsApp alert failed: ${error}`, resData?.error?.code ? `(Meta code ${resData.error.code})` : '');
+      return { success: false, error, data: resData };
     } catch (err) {
       console.error("Admin WhatsApp alert failed:", err);
       return { success: false, error: err.message };

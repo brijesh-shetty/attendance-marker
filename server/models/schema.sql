@@ -82,3 +82,30 @@ CREATE TABLE IF NOT EXISTS announcements (
     sent_via VARCHAR(20) DEFAULT 'fast2sms',
     sent_at TIMESTAMP DEFAULT NOW()
 );
+
+-- 9. Conversations Table (WhatsApp 24h Customer Service Window Tracking)
+CREATE TABLE IF NOT EXISTS conversations (
+    wa_id VARCHAR(30) PRIMARY KEY,               -- WhatsApp ID / phone number with country code (e.g. 919876543210)
+    phone VARCHAR(20),                          -- Clean 10-digit phone number
+    profile_name VARCHAR(100),                  -- WhatsApp display profile name
+    student_id VARCHAR(50),                     -- Matched student ID
+    student_name VARCHAR(200),                  -- Matched student name
+    last_inbound_at TIMESTAMPTZ,                -- Timestamp of most recent parent inbound message (UTC)
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 10. WhatsApp Messages Table
+CREATE TABLE IF NOT EXISTS messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id VARCHAR(30) REFERENCES conversations(wa_id) ON DELETE CASCADE,
+    message_id VARCHAR(100),                    -- Meta WhatsApp message ID
+    direction VARCHAR(10) NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+    message_type VARCHAR(20) DEFAULT 'text',     -- text, template, image, document, etc.
+    content TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'sent',          -- sent, pending, failed, received
+    error_message TEXT,
+    read BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+

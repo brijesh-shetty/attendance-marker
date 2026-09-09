@@ -34,18 +34,44 @@
         <h1 style="font-size: 1.6rem; font-weight: 800;">Galaxy Academy</h1>
       </div>
       <h2 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; text-align: center; color: var(--text-main);">Student Login</h2>
-      <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; margin-bottom: 20px;">Enter your Student ID and Password (default: parent phone number).</p>
-      
+      <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; margin-bottom: 20px;">Enter your batch details and student number. Default password is your parent's phone number.</p>
+
       <form id="student-login-form">
-        <div class="input-group">
-          <label for="student-id-input">Student ID</label>
-          <input type="number" id="student-id-input" class="input-field" placeholder="e.g. 1" required style="font-size: 1.1rem; text-align: center;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="input-group" style="margin-bottom:12px;">
+            <label for="student-batch-input">Batch #</label>
+            <input type="number" id="student-batch-input" class="input-field" placeholder="e.g. 1" min="1" required style="text-align:center;">
+          </div>
+          <div class="input-group" style="margin-bottom:12px;">
+            <label for="student-year-input">Year</label>
+            <input type="number" id="student-year-input" class="input-field" placeholder="e.g. 2026" min="2000" max="2100" required style="text-align:center;">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="input-group" style="margin-bottom:12px;">
+            <label for="student-grade-input">Grade</label>
+            <select id="student-grade-input" class="select-field" required style="text-align:center;">
+              <option value="12">2nd PU (12)</option>
+              <option value="11">1st PU (11)</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin-bottom:12px;">
+            <label for="student-number-input">Student #</label>
+            <input type="number" id="student-number-input" class="input-field" placeholder="e.g. 5" min="1" required style="text-align:center;">
+          </div>
         </div>
         <div class="input-group">
           <label for="student-password-input">Password</label>
-          <input type="password" id="student-password-input" class="input-field" placeholder="Parent Phone Number" required style="font-size: 1.1rem; text-align: center;">
+          <input type="password" id="student-password-input" class="input-field" placeholder="Parent Phone Number" required style="font-size: 1.05rem; text-align: center;">
         </div>
-        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 10px; font-weight: 700; background-color: var(--student-accent); border-color: var(--student-accent);">
+        <p style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin:-4px 0 12px;">Login ID: <strong id="student-login-preview">year-grade-batch-number</strong></p>
+        <details style="margin: 0 0 14px 0;">
+          <summary style="cursor:pointer; font-size:0.72rem; color:var(--text-muted); text-align:center;">Have an older direct Student ID?</summary>
+          <div class="input-group" style="margin-top:10px;">
+            <input type="text" id="student-id-input" class="input-field" placeholder="Legacy Student ID (optional)" style="text-align:center;">
+          </div>
+        </details>
+        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 4px; font-weight: 700; background-color: var(--student-accent); border-color: var(--student-accent);">
           <i data-lucide="log-in"></i> Login to Portal
         </button>
       </form>
@@ -149,9 +175,19 @@
       <!-- 4. MY FEES VIEW -->
       <section id="student-fees-view" class="view-section">
         <h2>My Fee Payment Status</h2>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Monthly tuition fee statuses recorded by the administration.</p>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Your total fee, amount received, outstanding due, and payment history.</p>
 
         <div id="student-fees-list-container">
+          <!-- Rendered by JS -->
+        </div>
+      </section>
+
+      <!-- 5. STUDENT RESOURCES VIEW -->
+      <section id="student-resources-view" class="view-section">
+        <h2>Study Resources & Downloads</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Class notes, assignments, PDFs, and study materials provided by Galaxy Academy.</p>
+
+        <div id="student-resources-list-container">
           <!-- Rendered by JS -->
         </div>
       </section>
@@ -171,6 +207,10 @@
       <div class="nav-item" data-view="student-marks">
         <i data-lucide="file-text"></i>
         <span>My Marks</span>
+      </div>
+      <div class="nav-item" data-view="student-resources">
+        <i data-lucide="folder-down"></i>
+        <span>Resources</span>
       </div>
       <div class="nav-item" data-view="student-fees">
         <i data-lucide="credit-card"></i>
