@@ -2216,6 +2216,14 @@ const tradingviewLimiter = rateLimit({
 // tradingview route so the global JSON limits still guard the rest of the API.
 const acceptPlainOrJson = express.text({ type: '*/*', limit: '32kb' });
 
+// Recognise a "structured" TradingView alert — one with any of the four
+// well-known fields we know how to format. Anything else is treated as plain
+// text (either JSON we don't recognise, or the urlencoded pass-through case).
+function isStructuredAlert(obj) {
+  return !!(obj && (obj.symbol || obj.action || obj.side || obj.price !== undefined
+    || obj.note || obj.message));
+}
+
 app.post('/webhook/tradingview', tradingviewLimiter, acceptPlainOrJson, async (req, res) => {
   const expectedSecret = process.env.TRADINGVIEW_WEBHOOK_SECRET;
   if (!expectedSecret) {
@@ -2223,13 +2231,26 @@ app.post('/webhook/tradingview', tradingviewLimiter, acceptPlainOrJson, async (r
     return res.sendStatus(503);
   }
 
-  // The raw body is now a string (text middleware). Try to parse it as JSON;
-  // if that fails, treat it as plain text.
-  const raw = typeof req.body === 'string' ? req.body : '';
+  // Body can arrive in one of three shapes depending on Content-Type:
+  //   • text/plain            → req.body is a string (from express.text())
+  //   • application/json      → req.body is an object (from express.json())
+  //   • application/x-www-form-urlencoded (curl -d default, TradingView too)
+  //                           → req.body is an object where the raw text ends up
+  //                             as a single key with an empty value.
+  let raw = '';
   let parsed = null;
-  if (raw) {
-    try { parsed = JSON.parse(raw); }
-    catch { parsed = null; }
+
+  if (typeof req.body === 'string') {
+    raw = req.body;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = null; }
+  } else if (req.body && typeof req.body === 'object') {
+    parsed = req.body;
+    // Detect the "urlencoded plain text" case: exactly one key with empty value.
+    const keys = Object.keys(parsed);
+    if (keys.length === 1 && parsed[keys[0]] === '' && !isStructuredAlert(parsed)) {
+      raw = keys[0];
+      parsed = null;
+    }
   }
 
   // Accept the secret either in the URL query (?secret=…) or in the JSON body.
