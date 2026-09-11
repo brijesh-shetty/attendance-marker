@@ -2211,15 +2211,32 @@ const tradingviewLimiter = rateLimit({
   message: { message: 'Rate limit reached for /webhook/tradingview.' }
 });
 
-app.post('/webhook/tradingview', tradingviewLimiter, async (req, res) => {
+// Accept both application/json (structured) and text/plain (TradingView's
+// default when the Message field is left empty). We keep this scoped to the
+// tradingview route so the global JSON limits still guard the rest of the API.
+const acceptPlainOrJson = express.text({ type: '*/*', limit: '32kb' });
+
+app.post('/webhook/tradingview', tradingviewLimiter, acceptPlainOrJson, async (req, res) => {
   const expectedSecret = process.env.TRADINGVIEW_WEBHOOK_SECRET;
   if (!expectedSecret) {
     console.warn('TRADINGVIEW_WEBHOOK_SECRET is not set; refusing every TradingView webhook until it is.');
     return res.sendStatus(503);
   }
 
-  const providedSecret = String(req.body?.secret || '');
-  // Constant-time compare so an attacker can't measure timing to guess bytes.
+  // The raw body is now a string (text middleware). Try to parse it as JSON;
+  // if that fails, treat it as plain text.
+  const raw = typeof req.body === 'string' ? req.body : '';
+  let parsed = null;
+  if (raw) {
+    try { parsed = JSON.parse(raw); }
+    catch { parsed = null; }
+  }
+
+  // Accept the secret either in the URL query (?secret=…) or in the JSON body.
+  // URL query is what lets you leave TradingView's Message field completely
+  // empty and still authenticate — TradingView's default plain text has no
+  // room for a secret.
+  const providedSecret = String(req.query.secret || (parsed && parsed.secret) || '');
   const secretsMatch = expectedSecret.length === providedSecret.length &&
     crypto.timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
   if (!secretsMatch) return res.sendStatus(403);
@@ -2236,21 +2253,31 @@ app.post('/webhook/tradingview', tradingviewLimiter, async (req, res) => {
   const templateName = process.env.TRADINGVIEW_TEMPLATE_NAME || 'trading_alert';
   const language = process.env.TRADINGVIEW_TEMPLATE_LANGUAGE || 'en';
 
-  // Pull the standard fields from the alert body. Anything missing becomes an
-  // empty string so the template still renders — Meta rejects null parameters.
-  const params = [
-    String(req.body?.symbol || ''),
-    String(req.body?.action || req.body?.side || ''),
-    String(req.body?.price ?? ''),
-    String(req.body?.note || req.body?.message || '')
-  ];
+  // Build the single {{1}} body variable. Priority:
+  //   1) Structured JSON with fields → compact "SYMBOL · ACTION · price · note"
+  //   2) Plain text (TradingView default or the admin's custom message) as-is
+  //   3) Fallback so Meta never receives an empty parameter (it rejects those)
+  let alertText;
+  if (parsed && typeof parsed === 'object') {
+    const bits = [
+      parsed.symbol, parsed.action || parsed.side,
+      parsed.price !== undefined ? `₹${parsed.price}` : '',
+      parsed.note || parsed.message || ''
+    ].map(v => String(v || '').trim()).filter(Boolean);
+    alertText = bits.length ? bits.join(' · ') : raw;
+  } else {
+    alertText = raw;
+  }
+  alertText = (alertText || 'Alert triggered').trim().slice(0, 1000); // Meta caps template body params at 1024 chars
 
   try {
-    const result = await notificationService.sendTemplate({ to, templateName, params, language });
+    const result = await notificationService.sendTemplate({
+      to, templateName, params: [alertText], language
+    });
     if (!result.success) {
       console.error('TradingView alert forward failed:', result.error, result.data || '');
     } else {
-      console.log(`📈 TradingView alert forwarded to ${to} (${params[0]} ${params[1]})`);
+      console.log(`📈 TradingView alert forwarded to ${to}: ${alertText}`);
     }
   } catch (err) {
     console.error('TradingView webhook handler crashed:', err);
