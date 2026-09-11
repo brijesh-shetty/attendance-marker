@@ -2495,6 +2495,7 @@ app.use('/admin', express.static(path.join(ROOT_DIR, 'admin')));
 app.use('/student', express.static(path.join(ROOT_DIR, 'student')));
 app.use('/css', express.static(path.join(ROOT_DIR, 'css')));
 app.use('/js', express.static(path.join(ROOT_DIR, 'js')));
+app.use('/assets', express.static(path.join(ROOT_DIR, 'assets')));
 app.get('/sw.js', (req, res) => res.sendFile(path.join(ROOT_DIR, 'sw.js')));
 app.get('/manifest.json', (req, res) => res.sendFile(path.join(ROOT_DIR, 'manifest.json')));
 app.get('/robots.txt', (req, res) => res.sendFile(path.join(ROOT_DIR, 'robots.txt')));
