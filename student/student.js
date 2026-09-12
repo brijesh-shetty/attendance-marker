@@ -262,33 +262,44 @@ class StudentPortalController {
     document.getElementById("student-login-form").addEventListener("submit", async event => {
       event.preventDefault();
       try {
-        const legacyId = document.getElementById("student-id-input")?.value.trim();
+        const legacyIdInput = document.getElementById("student-id-input");
+        const legacyId = legacyIdInput?.value.trim();
         const password = document.getElementById("student-password-input").value;
         const year = document.getElementById("student-year-input")?.value.trim();
         const grade = document.getElementById("student-grade-input")?.value;
         const batchNumber = document.getElementById("student-batch-input")?.value.trim();
         const number = document.getElementById("student-number-input")?.value.trim();
 
-        // Prefer the composed batch coordinates; fall back to the legacy Student
-        // ID field for students that were created before batch isolation.
+        // Autofill / password managers on mobile occasionally pre-fill the
+        // collapsed "legacy Student ID" field with a guess. If the user typed
+        // real batch details, ALWAYS prefer those — the legacy path is only
+        // taken when the batch fields are empty.
+        const hasBatchFields = year && grade && batchNumber && number;
+        const legacyDetailsEl = legacyIdInput?.closest("details");
+        const legacyOpen = legacyDetailsEl ? legacyDetailsEl.open : true;
+
         const payload = { password };
-        if (legacyId) {
-          payload.studentId = legacyId;
-        } else {
-          if (!year || !grade || !batchNumber || !number) {
-            throw new Error("Please fill in batch number, year, grade and student number.");
-          }
+        if (hasBatchFields) {
           payload.year = year;
           payload.grade = grade;
           payload.batchNumber = batchNumber;
           payload.number = number;
+        } else if (legacyId && legacyOpen) {
+          payload.studentId = legacyId;
+        } else {
+          throw new Error("Please fill in batch number, year, grade and student number.");
         }
 
         const result = await db.studentLogin(payload);
         this.loginSuccess(result.student, result.mustChangePassword);
         this.showToast(`Welcome back, ${result.student.name}!`);
       } catch (error) {
-        this.showToast(error.message || "Invalid Student ID or password.", "danger");
+        // Prefer server-provided message; also surface the HTTP status so a
+        // rate-limit hit (429) or CSRF block (403) is legible instead of a
+        // generic "invalid credentials".
+        const message = error.message || "Invalid Student ID or password.";
+        console.error("Student login failed:", error);
+        this.showToast(message, "danger");
       }
     });
 

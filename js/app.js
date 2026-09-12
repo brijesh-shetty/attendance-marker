@@ -111,6 +111,60 @@ class AppController {
   }
 
   // Show customized alert notifications
+  // Promise-based in-app confirm that works reliably on mobile PWAs where
+  // native window.confirm() is often silently suppressed. Returns Promise<boolean>.
+  confirmAction(message, { okLabel = "Confirm", cancelLabel = "Cancel", danger = false } = {}) {
+    return new Promise(resolve => {
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; padding:16px; animation:fadeInModal 0.15s ease-out;";
+
+      const modal = document.createElement("div");
+      modal.style.cssText = "background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-lg); padding:20px; max-width:400px; width:100%; box-shadow:0 10px 30px rgba(0,0,0,0.5);";
+
+      const msg = document.createElement("p");
+      msg.style.cssText = "margin:0 0 16px; font-size:0.92rem; line-height:1.5; color:var(--text-main); white-space:pre-line;";
+      msg.textContent = message;
+
+      const btnRow = document.createElement("div");
+      btnRow.style.cssText = "display:flex; gap:10px; justify-content:flex-end;";
+
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "btn btn-secondary";
+      cancel.style.cssText = "flex:1; padding:11px 14px; font-size:0.9rem; touch-action:manipulation;";
+      cancel.textContent = cancelLabel;
+
+      const ok = document.createElement("button");
+      ok.type = "button";
+      ok.className = danger ? "btn btn-danger" : "btn btn-primary";
+      ok.style.cssText = "flex:1; padding:11px 14px; font-size:0.9rem; touch-action:manipulation;";
+      ok.textContent = okLabel;
+
+      const cleanup = (value) => { backdrop.remove(); resolve(value); };
+      // Support both pointer taps (touch + mouse) — some old Android versions
+      // fire 'click' unreliably after backdrop insertion, but pointerup always works.
+      const bind = (el, val) => {
+        const handler = (e) => { e.preventDefault(); e.stopPropagation(); cleanup(val); };
+        el.addEventListener("click", handler);
+      };
+      bind(cancel, false);
+      bind(ok, true);
+      backdrop.addEventListener("click", (e) => { if (e.target === backdrop) cleanup(false); });
+
+      btnRow.append(cancel, ok);
+      modal.append(msg, btnRow);
+      backdrop.append(modal);
+      document.body.appendChild(backdrop);
+      // Focus OK so an Enter press confirms, Esc cancels.
+      setTimeout(() => ok.focus(), 0);
+      const keyHandler = (e) => {
+        if (e.key === "Escape") { document.removeEventListener("keydown", keyHandler); cleanup(false); }
+        if (e.key === "Enter") { document.removeEventListener("keydown", keyHandler); cleanup(true); }
+      };
+      document.addEventListener("keydown", keyHandler);
+    });
+  }
+
   showToast(message, type = "success") {
     const toast = document.createElement("div");
     toast.className = `toast ${type}`;
@@ -354,7 +408,7 @@ class AppController {
     if (!templateName) return this.showToast('Enter a template name first.', 'danger');
     const selected = Array.from(this.feeReminderSelection || []);
     if (!selected.length) return this.showToast('Select at least one student.', 'danger');
-    if (!confirm(`Send WhatsApp reminder “${templateName}” to ${selected.length} student(s)?`)) return;
+    if (!await this.confirmAction(`Send WhatsApp reminder “${templateName}” to ${selected.length} student(s)?`)) return;
 
     const btn = document.getElementById('fee-reminder-send-btn');
     btn.disabled = true;
@@ -426,7 +480,7 @@ class AppController {
       const index = Number(button.dataset.index);
       const transaction = transactions[index];
       if (!transaction) return;
-      if (!confirm(`Delete payment of ${this.formatCurrency(transaction.amount)} on ${transaction.date}? This cannot be undone.`)) return;
+      if (!await this.confirmAction(`Delete payment of ${this.formatCurrency(transaction.amount)} on ${transaction.date}? This cannot be undone.`, { danger: true, okLabel: 'Delete' })) return;
       try {
         await db.deletePaymentTransaction(student.id, index);
         this.showToast(`Payment entry deleted for ${student.name}.`);
@@ -442,7 +496,7 @@ class AppController {
       wipeBtn.style.cssText = 'margin-top:8px; padding:6px 10px; font-size:.75rem;';
       wipeBtn.textContent = `Delete all ${history.length} payment(s) for this student`;
       wipeBtn.addEventListener('click', async () => {
-        if (!confirm(`This will erase ALL ${history.length} payment entries for ${student.name}. The total fee is kept. Continue?`)) return;
+        if (!await this.confirmAction(`This will erase ALL ${history.length} payment entries for ${student.name}. The total fee is kept. Continue?`, { danger: true, okLabel: 'Delete all' })) return;
         try {
           await db.deleteAllPaymentTransactions(student.id);
           this.showToast(`All payments cleared for ${student.name}.`);
@@ -625,8 +679,8 @@ class AppController {
     const students = await db.getStudents();
     const student = students.find(s => s.id === studentId);
     const name = student ? student.name : "this student";
-    if (confirm(`Are you sure you want to remove ${name}?`)) {
-      if (confirm(`WARNING: This will permanently delete ${name} and all associated records. Press OK to proceed.`)) {
+    if (await this.confirmAction(`Are you sure you want to remove ${name}?`, { danger: true, okLabel: 'Remove' })) {
+      if (await this.confirmAction(`WARNING: This will permanently delete ${name} and all associated records. Press OK to proceed.`, { danger: true, okLabel: 'Delete permanently' })) {
         await db.deleteStudent(studentId);
         this.showToast("Student deleted.", "danger");
         document.getElementById("student-details-modal").classList.remove("active");
@@ -655,7 +709,7 @@ class AppController {
           const newResetBtn = resetPassBtn.cloneNode(true);
           resetPassBtn.parentNode.replaceChild(newResetBtn, resetPassBtn);
           newResetBtn.addEventListener("click", async () => {
-            if (confirm(`Reset password for Student #${student.number || student.id} (${student.name}) to parent phone number (${student.phone || student.parentPhone || 'default'})?`)) {
+            if (await this.confirmAction(`Reset password for Student #${student.number || student.id} (${student.name}) to parent phone number (${student.phone || student.parentPhone || 'default'})?`)) {
               const res = await db.resetStudentPassword(student.id);
               this.showToast(res.message, "success");
             }
@@ -794,7 +848,7 @@ class AppController {
     const dateVal = document.getElementById("attendance-date-input").value;
     if (!dateVal) return;
 
-    if (confirm(`Are you sure you want to mark ${dateVal} as a Leave Day? Existing attendance for this day will be overwritten.`)) {
+    if (await this.confirmAction(`Are you sure you want to mark ${dateVal} as a Leave Day? Existing attendance for this day will be overwritten.`)) {
       await db.saveAttendance(dateVal, { __leaveDay: true });
       this.showToast(`Date ${dateVal} marked as a Leave Day.`);
       await this.loadAttendanceSetup();
@@ -806,7 +860,7 @@ class AppController {
     const dateVal = document.getElementById("attendance-date-input").value;
     if (!dateVal) return;
 
-    if (confirm(`Are you sure you want to unmark ${dateVal} as a Leave Day?`)) {
+    if (await this.confirmAction(`Are you sure you want to unmark ${dateVal} as a Leave Day?`)) {
       await db.saveAttendance(dateVal, {});
       this.showToast(`Leave day status removed for ${dateVal}.`);
       await this.loadAttendanceSetup();
@@ -1841,7 +1895,7 @@ class AppController {
       return;
     }
 
-    if (!confirm(`Are you sure you want to send WhatsApp notifications to the ${absentees.length} absent student(s)?`)) {
+    if (!await this.confirmAction(`Are you sure you want to send WhatsApp notifications to the ${absentees.length} absent student(s)?`)) {
       return;
     }
 
@@ -3151,7 +3205,7 @@ class AppController {
       container.querySelectorAll('.delete-resource-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           const resId = e.currentTarget.getAttribute('data-id');
-          if (confirm('Are you sure you want to delete this study resource? Students will no longer be able to download it.')) {
+          if (await this.confirmAction('Are you sure you want to delete this study resource? Students will no longer be able to download it.', { danger: true, okLabel: 'Delete' })) {
             try {
               await db.deleteAdminResource(resId);
               this.showToast('Resource deleted successfully.');
