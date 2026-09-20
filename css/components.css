@@ -869,3 +869,274 @@ input:checked + .slider::after {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* ── Responsive Action Button Groups & Form Grids ─────── */
+.action-button-group {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.action-button-group .btn {
+  flex: 1 1 130px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .action-button-group {
+    flex-direction: column;
+  }
+  .action-button-group .btn {
+    flex: 1 1 100%;
+    width: 100%;
+    white-space: normal;
+  }
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 540px) {
+  .form-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Fee Payments Filter Bar */
+.fee-filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 540px) {
+  .fee-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .fee-filter-bar select {
+    width: 100%;
+    min-width: 0 !important;
+  }
+  .fee-filter-bar #payment-filter-count {
+    margin-left: 0 !important;
+    text-align: center;
+  }
+  .fee-filter-bar #view-fees-in-sheets-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Scrollable Container for Tables & Entry Forms on Mobile */
+.table-scroll-container {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll-container .marks-split-row {
+  min-width: 480px;
+}
+
+/* Stats Grid Desktop Improvement */
+@media (min-width: 768px) {
+  .stats-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* ── Mobile Bottom Nav: "More" Dropdown ───────────────── */
+
+/* "More" button is hidden on desktop/tablet since all nav items fit */
+.nav-more-btn {
+  display: none !important;
+}
+
+/* Slide-up "More" dropdown panel */
+.nav-more-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 199;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.nav-more-overlay.active {
+  display: block;
+  opacity: 1;
+}
+
+.nav-more-dropdown {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%) translateY(100%);
+  width: 100%;
+  max-width: 540px;
+  background: rgba(21, 27, 38, 0.98);
+  backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border-color);
+  border-radius: 18px 18px 0 0;
+  z-index: 200;
+  padding: 8px 16px 20px;
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.nav-more-dropdown.active {
+  transform: translateX(-50%) translateY(0);
+}
+
+.nav-more-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 4px 14px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 6px;
+}
+
+.nav-more-header span {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.nav-more-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.nav-more-close-btn:hover {
+  background: var(--border-color);
+  color: var(--text-main);
+}
+
+.nav-more-close-btn i {
+  width: 16px;
+  height: 16px;
+}
+
+.nav-more-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  color: var(--text-main);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.nav-more-item:hover,
+.nav-more-item:active {
+  background: rgba(139, 92, 246, 0.1);
+  color: var(--primary-hover);
+}
+
+.nav-more-item.active-view {
+  background: rgba(139, 92, 246, 0.12);
+  color: var(--primary-hover);
+}
+
+.nav-more-item i {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.nav-more-item:hover i,
+.nav-more-item:active i,
+.nav-more-item.active-view i {
+  color: var(--primary-hover);
+}
+
+/* On phones (≤540px), hide secondary nav items and show "More" button */
+@media (max-width: 540px) {
+  .nav-hide-mobile {
+    display: none !important;
+  }
+  .nav-more-btn {
+    display: flex !important;
+  }
+}
+
+/* ── Admin Message Modal – Phone Responsive ───────────── */
+
+.admin-msg-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.admin-msg-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.admin-msg-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 540px) {
+  .admin-msg-modal {
+    padding: 16px;
+    max-height: 92vh;
+  }
+
+  .admin-msg-title {
+    font-size: 0.95rem;
+  }
+
+  .admin-msg-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .admin-msg-actions {
+    flex-direction: column;
+  }
+
+  .admin-msg-actions .btn {
+    flex: 1 1 100% !important;
+    width: 100%;
+  }
+}
+
+

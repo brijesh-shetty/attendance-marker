@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fee Collection System</title>
+<style>
+  :root {
+    --dark: #0d1b2a;
+    --green: #1b4332;
+    --blue: #1d4e89;
+    --orange: #e07b39;
+    --red: #c0392b;
+    --light: #f4f6f8;
+    --border: #dee2e6;
+    --text: #333;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: var(--text); }
+
+  /* NAV */
+  .nav { background: var(--dark); padding: 0; display: flex; overflow-x: auto; position: sticky; top: 0; z-index: 100; }
+  .nav button { background: none; border: none; color: #aaa; padding: 14px 16px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; border-bottom: 3px solid transparent; transition: all 0.2s; }
+  .nav button.active, .nav button:hover { color: white; border-bottom-color: #4fc3f7; }
+
+  /* SECTIONS */
+  .section { display: none; max-width: 900px; margin: 0 auto; padding: 20px 16px; }
+  .section.active { display: block; }
+
+  /* CARDS */
+  .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; color: white; }
+
+  /* STAGE CARDS */
+  .stage { border-left: 5px solid; padding: 16px; border-radius: 0 10px 10px 0; margin-bottom: 14px; background: white; box-shadow: 0 2px 6px rgba(0,0,0,0.06); }
+  .stage h3 { font-size: 15px; margin-bottom: 4px; }
+  .stage .meta { font-size: 12px; color: #666; margin-bottom: 12px; }
+  .stage ul { padding-left: 18px; }
+  .stage ul li { font-size: 13px; margin-bottom: 6px; line-height: 1.5; }
+  .msg-box { background: #eaf0fb; border-left: 3px solid var(--blue); padding: 10px 14px; border-radius: 0 8px 8px 0; margin-top: 12px; font-size: 12px; font-style: italic; color: #1d4e89; line-height: 1.6; white-space: pre-line; }
+  .expected { background: #f4f6f8; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; margin-top: 10px; }
+
+  /* STEPS */
+  .step { display: flex; gap: 14px; margin-bottom: 16px; align-items: flex-start; }
+  .step-num { min-width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: white; flex-shrink: 0; }
+  .step-content h4 { font-size: 14px; margin-bottom: 4px; }
+  .step-content p { font-size: 13px; color: #555; line-height: 1.5; }
+
+  /* TRACKER */
+  .tracker-controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tracker-controls input, .tracker-controls select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+  .tracker-controls input { flex: 1; min-width: 140px; }
+  .btn { padding: 8px 18px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity 0.2s; }
+  .btn:hover { opacity: 0.85; }
+  .btn-green { background: var(--green); color: white; }
+  .btn-red { background: var(--red); color: white; }
+  .btn-blue { background: var(--blue); color: white; }
+  .btn-small { padding: 4px 10px; font-size: 11px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: var(--dark); color: white; padding: 10px 8px; text-align: left; }
+  td { padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:nth-child(even) { background: #f9f9f9; }
+  tr:hover { background: #f0f4ff; }
+
+  .status-paid { background: #e8f5e9; color: #1b5e20; padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .status-pending { background: #fdecea; color: #b71c1c; padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .status-partial { background: #fff8e1; color: #e65100; padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .status-promised { background: #e3f2fd; color: #0d47a1; padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+
+  /* SUMMARY BOXES */
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .summary-box { background: white; border-radius: 10px; padding: 14px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.07); }
+  .summary-box .num { font-size: 24px; font-weight: 800; }
+  .summary-box .lbl { font-size: 11px; color: #666; margin-top: 2px; }
+
+  /* GOLDEN RULES */
+  .rule { display: flex; gap: 0; margin-bottom: 8px; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .rule-num { min-width: 48px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px; color: white; }
+  .rule-text { padding: 12px 14px; font-size: 13px; background: white; flex: 1; }
+
+  /* TRICKS */
+  .trick { background: white; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; border-left: 4px solid var(--blue); box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .trick h4 { font-size: 13px; color: var(--blue); margin-bottom: 4px; }
+  .trick .say { font-style: italic; font-size: 12px; color: #1d4e89; background: #eaf0fb; padding: 6px 10px; border-radius: 6px; margin: 6px 0; }
+  .trick .why { font-size: 12px; color: #555; }
+
+  /* MESSAGES */
+  .msg-template { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); }
+  .msg-template h4 { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .msg-box-copy { background: #f8f9fa; border: 1px dashed #ccc; padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.7; white-space: pre-line; margin-bottom: 8px; }
+  .copy-btn { background: var(--blue); color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 11px; cursor: pointer; font-weight: 600; }
+  .copy-btn:hover { background: #1a3d6e; }
+  .copied { background: var(--green) !important; }
+
+  /* HEADER */
+  .page-header { background: linear-gradient(135deg, var(--dark), #1d3557); color: white; padding: 24px 20px; margin-bottom: 0; }
+  .page-header h1 { font-size: 22px; margin-bottom: 4px; }
+  .page-header p { font-size: 13px; opacity: 0.75; }
+
+  /* SUNDAY CHECKLIST */
+  .checklist-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .checklist-item input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+  .checklist-item label { font-size: 13px; cursor: pointer; }
+  .checklist-item.checked label { text-decoration: line-through; color: #aaa; }
+
+  @media (max-width: 600px) {
+    .nav button { padding: 12px 10px; font-size: 11px; }
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>📚 Fee Collection System</h1>
+  <p>Complete step-by-step guide for tuition centre fee collection</p>
+</div>
+
+<nav class="nav">
+  <button class="active" onclick="show('escalation')">📋 Escalation Plan</button>
+  <button onclick="show('deadline')">⏰ Deadline System</button>
+  <button onclick="show('tracker')">📊 Tracker</button>
+  <button onclick="show('messages')">💬 Messages</button>
+  <button onclick="show('rules')">⭐ Golden Rules</button>
+  <button onclick="show('tricks')">🧠 Psych Triggers</button>
+  <button onclick="show('sunday')">📅 Sunday Review</button>
+</nav>
+
+<!-- ===== ESCALATION PLAN ===== -->
+<div id="escalation" class="section active">
+  <div class="summary-grid">
+    <div class="summary-box"><div class="num" style="color:var(--dark)">30</div><div class="lbl">Total Students</div></div>
+    <div class="summary-box"><div class="num" style="color:var(--orange)">₹10k</div><div class="lbl">Avg Pending</div></div>
+    <div class="summary-box"><div class="num" style="color:var(--green)">₹3L</div><div class="lbl">Target</div></div>
+    <div class="summary-box"><div class="num" style="color:var(--blue)">3 Wks</div><div class="lbl">Timeline</div></div>
+  </div>
+
+  <div class="stage" style="border-color:var(--green)">
+    <span class="badge" style="background:var(--green)">STAGE 1</span>
+    <h3 style="color:var(--green); margin-top:8px">WhatsApp Group Message</h3>
+    <div class="meta">📅 Week 1 — Day 1 to 3 &nbsp;|&nbsp; 👥 All 30 parents</div>
+    <ul>
+      <li>Send group message with UPI QR code attached</li>
+      <li>Use SPECIFIC deadline date — never vague words like "soon"</li>
+      <li>Mention "uninterrupted classes" — creates mild urgency</li>
+      <li>Open notebook and mark all 30 parents as PENDING</li>
+      <li>Wait exactly 3 days — do not chase before that</li>
+    </ul>
+    <div class="msg-box">Dear Parents and Students 🙏
+Hope everyone is doing well! Gentle reminder regarding pending fee balance. Kindly clear before [DATE] to ensure uninterrupted classes.
+UPI: [Your ID] | Cash at centre
+For queries, message me personally. Thank you! — [Name]</div>
+    <div class="expected" style="color:var(--green)">✅ Expected: ~10 easy payers = ₹1,00,000 collected</div>
+  </div>
+
+  <div class="stage" style="border-color:var(--blue)">
+    <span class="badge" style="background:var(--blue)">STAGE 2</span>
+    <h3 style="color:var(--blue); margin-top:8px">Personal WhatsApp (Individual)</h3>
+    <div class="meta">📅 Week 1-2 — Day 4 to 7 &nbsp;|&nbsp; 👥 Non-responders from Stage 1</div>
+    <ul>
+      <li>Message each non-paying parent INDIVIDUALLY — not in group</li>
+      <li>Use child's name — makes it personal and harder to ignore</li>
+      <li>Acknowledge any partial payment with thanks first</li>
+      <li>Offer installment option — removes their main excuse</li>
+      <li>Give 3 days to respond before calling</li>
+    </ul>
+    <div class="msg-box">Dear [Parent Name] 🙏
+Hope [Child Name] is doing well! Noticed the fee balance is still pending. Let me know when you can arrange — even partial payment or installments are fine.
+UPI: [Your ID] | Thank you! — [Name]</div>
+    <div class="expected" style="color:var(--blue)">✅ Expected: ~10 more parents = ₹1,00,000 more collected</div>
+  </div>
+
+  <div class="stage" style="border-color:var(--orange)">
+    <span class="badge" style="background:var(--orange)">STAGE 3</span>
+    <h3 style="color:var(--orange); margin-top:8px">Direct Phone Call</h3>
+    <div class="meta">📅 Week 2 — Day 8 to 12 &nbsp;|&nbsp; 👥 Still unresponsive parents</div>
+    <ul>
+      <li>Call between 6pm-8pm — parents available after work</li>
+      <li>Be brief, warm and direct — not confrontational</li>
+      <li>Ask specifically: "When can you arrange the payment?"</li>
+      <li>Accept whatever date they give — note it immediately</li>
+      <li>Follow up on exact date they promised without fail</li>
+    </ul>
+    <div class="msg-box">Script: "Hello [Name], this is [Your Name] from [Centre]. Calling regarding [Child]'s fee balance. When would it be convenient to arrange payment? Even partial is fine to start."</div>
+    <div class="expected" style="color:var(--orange)">✅ Expected: ~7 parents = ₹70,000 more collected</div>
+  </div>
+
+  <div class="stage" style="border-color:var(--red)">
+    <span class="badge" style="background:var(--red)">STAGE 4</span>
+    <h3 style="color:var(--red); margin-top:8px">Face to Face Meeting</h3>
+    <div class="meta">📅 Week 3 — Day 13 to 18 &nbsp;|&nbsp; 👥 Truly stubborn parents only</div>
+    <ul>
+      <li>Catch during drop-off or pick-up time — they cannot avoid you</li>
+      <li>Request private 2-minute conversation — never embarrass publicly</li>
+      <li>Show child's progress report — remind them of value</li>
+      <li>Offer post-dated cheque — removes delay excuse</li>
+      <li>Politely mention seat may go to waitlisted students</li>
+    </ul>
+    <div class="msg-box">Approach: "Could we speak privately for 2 minutes? [Child] has been doing great and I want to ensure they continue. Can we sort out the balance today? I have flexible options available."</div>
+    <div class="expected" style="color:var(--red)">✅ Expected: Remaining 3-5 parents = ₹30,000-50,000 collected</div>
+  </div>
+</div>
+
+<!-- ===== DEADLINE SYSTEM ===== -->
+<div id="deadline" class="section">
+  <div class="card">
+    <div class="card-header">
+      <span class="badge" style="background:var(--red)">PROBLEM</span>
+      <h3>Why Your Deadlines Are Not Working</h3>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+      <div style="background:#fdecea; padding:12px; border-radius:8px; font-size:13px">❌ Vague deadlines like "pay soon"</div>
+      <div style="background:#fdecea; padding:12px; border-radius:8px; font-size:13px">❌ No follow-up after deadline passes</div>
+      <div style="background:#fdecea; padding:12px; border-radius:8px; font-size:13px">❌ No tracking of who paid who didn't</div>
+      <div style="background:#fdecea; padding:12px; border-radius:8px; font-size:13px">❌ Same polite message repeated always</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num" style="background:var(--dark)">1</div>
+    <div class="step-content">
+      <h4>Set Deadline Correctly — Day 0</h4>
+      <p>Always use SPECIFIC date. Write in notebook: Parent | Amount | Deadline | Follow-up date. Set phone reminder for yourself one day before.</p>
+      <div class="msg-box" style="margin-top:8px">❌ WRONG: "Kindly pay soon"
+✅ RIGHT: "Kindly pay before Friday 13th June"</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num" style="background:var(--blue)">2</div>
+    <div class="step-content">
+      <h4>One Day Before Deadline — Day -1</h4>
+      <p>Send personal reminder to every pending parent. Keep it short and specific with exact amount. This removes the "I forgot" excuse completely.</p>
+      <div class="msg-box" style="margin-top:8px">"Dear [Name], tomorrow [DATE] is the last date for Rs.[AMOUNT] fee payment. Kindly arrange today itself. Thank you!"</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num" style="background:var(--green)">3</div>
+    <div class="step-content">
+      <h4>On Deadline Day — Day 0 (Most Important!)</h4>
+      <p>Check notebook at 6pm. NEVER let deadline pass silently — same day response always. Thank those who paid.</p>
+      <div class="msg-box" style="margin-top:8px">"Dear [Name], today was the last date. Request you to arrange by tomorrow morning. Please confirm when you can pay."</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num" style="background:var(--orange)">4</div>
+    <div class="step-content">
+      <h4>Day After Deadline — Day +1</h4>
+      <p>Call every parent who still has not paid. Get NEW specific commitment date. Note their exact words and promised date in notebook.</p>
+      <div class="msg-box" style="margin-top:8px">Call: "Hello [Name], can you arrange today? Even partial payment is fine. When exactly can you pay?"</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num" style="background:var(--red)">5</div>
+    <div class="step-content">
+      <h4>3 Days After Deadline — Day +3</h4>
+      <p>Final message before face-to-face. Tone becomes firm but respectful. Mention continuation of classes for first time. Then meet face-to-face.</p>
+      <div class="msg-box" style="margin-top:8px">"Dear [Name], Rs.[AMOUNT] is significantly overdue. Kindly arrange immediately to ensure [Child]'s classes continue without interruption."</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== TRACKER ===== -->
+<div id="tracker" class="section">
+  <div class="summary-grid" id="tracker-summary">
+    <div class="summary-box"><div class="num" id="s-total" style="color:var(--dark)">0</div><div class="lbl">Total Students</div></div>
+    <div class="summary-box"><div class="num" id="s-paid" style="color:var(--green)">0</div><div class="lbl">Paid ✅</div></div>
+    <div class="summary-box"><div class="num" id="s-pending" style="color:var(--red)">0</div><div class="lbl">Pending ❌</div></div>
+    <div class="summary-box"><div class="num" id="s-collected" style="color:var(--blue)">₹0</div><div class="lbl">Collected</div></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:14px">Add Student</h3>
+    <div class="tracker-controls">
+      <input id="t-name" placeholder="Parent / Student Name" />
+      <input id="t-child" placeholder="Child Name" />
+      <input id="t-amount" type="number" placeholder="Amount Pending (₹)" />
+      <input id="t-deadline" type="date" />
+      <select id="t-status">
+        <option value="pending">Not Paid ❌</option>
+        <option value="partial">Partial ⚠️</option>
+        <option value="promised">Promised 🤝</option>
+        <option value="paid">Paid ✅</option>
+      </select>
+      <input id="t-notes" placeholder="Notes / Next Action" />
+      <button class="btn btn-green" onclick="addStudent()">+ Add</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Parent Name</th>
+            <th>Child</th>
+            <th>Amount</th>
+            <th>Deadline</th>
+            <th>Status</th>
+            <th>Notes</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="tracker-body">
+          <tr><td colspan="8" style="text-align:center; color:#aaa; padding:20px">Add students above to start tracking</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MESSAGES ===== -->
+<div id="messages" class="section">
+  <div class="msg-template">
+    <h4>📢 Group Message (All Parents)</h4>
+    <div class="msg-box-copy" id="msg1">Dear Parents and Students 🙏
+
+Hope everyone is doing well and studies are going great!
+
+This is a gentle reminder regarding pending fee balance for this term. Kindly clear before [DATE] to ensure uninterrupted classes.
+
+💳 UPI: [Your UPI ID]
+✅ Cash: Directly at the centre
+
+For any queries, message me personally. Thank you! 🌟
+
+— [Your Name] 📚</div>
+    <button class="copy-btn" onclick="copyMsg('msg1', this)">Copy Message</button>
+  </div>
+
+  <div class="msg-template">
+    <h4>👤 Personal Message — Paid 50% (Individual)</h4>
+    <div class="msg-box-copy" id="msg2">Dear [Parent Name] 🙏
+
+Thank you so much for the payment earlier! [Child Name] is doing really well and we are happy to have them.
+
+Just a gentle reminder — the remaining fee balance of Rs.[AMOUNT] is still pending.
+
+Kindly arrange before [DATE].
+✅ UPI: [Your UPI ID] | Cash at centre
+
+Feel free to reach out if you need help! Thank you! 🙏
+
+— [Your Name]</div>
+    <button class="copy-btn" onclick="copyMsg('msg2', this)">Copy Message</button>
+  </div>
+
+  <div class="msg-template">
+    <h4>⚠️ Personal Message — Paid Less Than 25% (Individual)</h4>
+    <div class="msg-box-copy" id="msg3">Dear [Parent Name] 🙏
+
+Hope [Child Name] is doing well in their studies!
+
+I wanted to personally connect regarding the fee balance. As of now Rs.[AMOUNT] is still pending for this term.
+
+I completely understand that finances need planning. Please let me know:
+🔹 Can you arrange a partial payment this week?
+🔹 Would monthly installments work better?
+🔹 Would a post-dated arrangement help?
+
+I want to ensure [Child]'s classes continue without interruption and happy to work out a comfortable plan.
+
+✅ UPI: [Your UPI ID] | Cash at centre
+
+Thank you for your trust! 🙏 — [Your Name]</div>
+    <button class="copy-btn" onclick="copyMsg('msg3', this)">Copy Message</button>
+  </div>
+
+  <div class="msg-template">
+    <h4>⏰ One Day Before Deadline Reminder</h4>
+    <div class="msg-box-copy" id="msg4">Dear [Name] 🙏
+
+Just a reminder that tomorrow [DATE] is the last date for fee payment of Rs.[AMOUNT].
+
+Kindly arrange today itself to avoid any interruption.
+
+✅ UPI: [Your UPI ID]
+
+Thank you! — [Your Name]</div>
+    <button class="copy-btn" onclick="copyMsg('msg4', this)">Copy Message</button>
+  </div>
+
+  <div class="msg-template">
+    <h4>🚨 Deadline Missed — Same Day Follow-Up</h4>
+    <div class="msg-box-copy" id="msg5">Dear [Name] 🙏
+
+Today was the last date for the fee payment of Rs.[AMOUNT].
+
+Request you to kindly arrange by tomorrow morning. Please confirm when you can pay.
+
+Thank you for your understanding. — [Your Name]</div>
+    <button class="copy-btn" onclick="copyMsg('msg5', this)">Copy Message</button>
+  </div>
+
+  <div class="msg-template">
+    <h4>🔴 Final Warning — 3 Days After Deadline</h4>
+    <div class="msg-box-copy" id="msg6">Dear [Name] 🙏
+
+The fee balance of Rs.[AMOUNT] for [Child]'s classes is now significantly overdue.
+
+Request you to kindly arrange immediately to ensure [Child]'s classes continue without any interruption.
+
+Please respond today. Thank you. — [Your Name]</div>
+    <button class="copy-btn" onclick="copyMsg('msg6', this)">Copy Message</button>
+  </div>
+</div>
+
+<!-- ===== GOLDEN RULES ===== -->
+<div id="rules" class="section">
+  <div class="card" style="margin-bottom:20px">
+    <h3 style="margin-bottom:4px">The 7 Golden Rules</h3>
+    <p style="font-size:13px; color:#666">Follow these every single time without exception</p>
+  </div>
+
+  <div class="rule"><div class="rule-num" style="background:var(--green)">1</div><div class="rule-text"><b>Every deadline must have a follow-up date set in advance.</b> When you give a deadline, immediately set a phone reminder for Day -1, Day 0, and Day +1.</div></div>
+  <div class="rule"><div class="rule-num" style="background:var(--dark)">2</div><div class="rule-text"><b>Never let a deadline pass silently.</b> Same day response when deadline is missed. This is the most critical rule — one missed follow-up teaches parents that deadlines are not real.</div></div>
+  <div class="rule"><div class="rule-num" style="background:var(--green)">3</div><div class="rule-text"><b>Always get a new commitment date when deadline is missed.</b> Ask "When exactly can you pay?" and note their answer. That becomes the mini-deadline.</div></div>
+  <div class="rule"><div class="rule-num" style="background:var(--dark)">4</div><div class="rule-text"><b>Sunday review without fail — 10 minutes every week.</b> Check tracker, mark who paid, schedule follow-ups for next week. Skipping Sunday review breaks the entire system.</div></div>
+  <div class="rule"><div class="rule-num" style="background:var(--green)">5</div><div class="rule-text"><b>Never threaten child's education in public.</b> Always keep conversations private. Public embarrassment creates enemies — private conversations create solutions.</div></div>
+  <div class="rule"><div class="rule-num" style="background:var(--dark)">6</div><div class="rule-text"><b>Acknowledge every payment with a thank you message.</b> This builds goodwill, encourages referrals, and makes the parent feel valued — not just like a debtor.</div></div>
+  <div class="rule"><div class="rule-num" style="background:var(--green)">7</div><div class="rule-text"><b>Offer installments before escalating.</b> Remove every excuse before going firm. Most parents who "cannot pay" CAN pay in installments — give them that option first.</div></div>
+
+  <div class="card" style="margin-top:20px; background: #e8f5e9; border-left:5px solid var(--green)">
+    <h4 style="color:var(--green); margin-bottom:8px">🎯 The Core Principle</h4>
+    <p style="font-size:13px; line-height:1.7">Parents pay when they believe the deadline is real. Deadlines become real only when followed up consistently. <b>One missed follow-up = future deadlines ignored.</b> The system only works when all 7 rules are followed together.</p>
+  </div>
+</div>
+
+<!-- ===== PSYCHOLOGICAL TRIGGERS ===== -->
+<div id="tricks" class="section">
+  <div class="card" style="margin-bottom:16px">
+    <h3>🧠 Psychological Triggers That Work</h3>
+    <p style="font-size:13px; color:#666; margin-top:4px">Use these naturally in conversation — never aggressively</p>
+  </div>
+
+  <div class="trick">
+    <h4>👥 Social Proof</h4>
+    <div class="say">"Most parents have already cleared their dues this month."</div>
+    <div class="why">Creates social pressure without direct confrontation. Nobody wants to be the only one who hasn't paid.</div>
+  </div>
+
+  <div class="trick">
+    <h4>📊 Value Reminder</h4>
+    <div class="say">Show child's latest test scores or progress report during conversation.</div>
+    <div class="why">Reminds parents what they are getting for the money. Hard to say "I won't pay" after seeing their child's improvement.</div>
+  </div>
+
+  <div class="trick">
+    <h4>🔄 Flexibility Offer</h4>
+    <div class="say">"We accept installments — even Rs.2,000 to start is fine."</div>
+    <div class="why">Removes the "I cannot afford it" excuse. If they say no to installments, you know they are avoiding, not struggling.</div>
+  </div>
+
+  <div class="trick">
+    <h4>📝 Post-dated Cheque</h4>
+    <div class="say">"You can give a cheque dated for next week if that helps."</div>
+    <div class="why">Removes the "I have no cash today" excuse. Gets a commitment with a specific date attached.</div>
+  </div>
+
+  <div class="trick">
+    <h4>⏳ Scarcity (Last Resort)</h4>
+    <div class="say">"We have students on the waitlist — I want to secure your child's seat first."</div>
+    <div class="why">Creates fear of losing the spot. Use this only in Stage 4 — not earlier or it loses impact.</div>
+  </div>
+
+  <div class="trick">
+    <h4>🎁 Reciprocity</h4>
+    <div class="say">"[Child] has shown great improvement this month — really proud of them."</div>
+    <div class="why">Triggers natural human obligation. People feel guilty not paying after receiving good news about their child.</div>
+  </div>
+
+  <div class="trick">
+    <h4>📅 Specific Numbers</h4>
+    <div class="say">"The balance of Rs.8,400 is pending since [EXACT DATE]."</div>
+    <div class="why">Specific numbers feel more real and serious than round numbers. Shows you are tracking carefully.</div>
+  </div>
+</div>
+
+<!-- ===== SUNDAY REVIEW ===== -->
+<div id="sunday" class="section">
+  <div class="card">
+    <h3 style="margin-bottom:4px">📅 Sunday Review System</h3>
+    <p style="font-size:13px; color:#666; margin-bottom:16px">Every Sunday night — 10 minutes only. Do not skip.</p>
+
+    <div id="checklist">
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Open tracker and check who paid this week — mark as PAID ✅</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Identify who missed deadline this week — schedule call for Monday</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Check who made promises — set reminder for their specific date</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Calculate total collected this week — note in notebook</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Calculate remaining target — how much still to collect?</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Plan next week's follow-ups — who needs Stage 1, 2, 3 or 4?</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Send group reminder if more than 5 parents still pending</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox"> <label>Set phone reminders for all follow-ups next week</label>
+      </div>
+    </div>
+
+    <div style="margin-top:16px; text-align:center">
+      <button class="btn btn-green" onclick="resetChecklist()">Reset Checklist</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3 style="margin-bottom:12px">📊 Weekly Progress Notes</h3>
+    <div style="display:grid; gap:10px">
+      <div>
+        <label style="font-size:12px; font-weight:600; color:#666">Week of:</label>
+        <input type="date" style="display:block; width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; margin-top:4px; font-size:13px">
+      </div>
+      <div>
+        <label style="font-size:12px; font-weight:600; color:#666">Amount Collected This Week (₹):</label>
+        <input type="number" placeholder="e.g. 50000" style="display:block; width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; margin-top:4px; font-size:13px">
+      </div>
+      <div>
+        <label style="font-size:12px; font-weight:600; color:#666">Parents Who Paid:</label>
+        <textarea placeholder="List names here..." rows="3" style="display:block; width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; margin-top:4px; font-size:13px; resize:vertical"></textarea>
+      </div>
+      <div>
+        <label style="font-size:12px; font-weight:600; color:#666">Follow-ups Needed Next Week:</label>
+        <textarea placeholder="List parents and actions..." rows="3" style="display:block; width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; margin-top:4px; font-size:13px; resize:vertical"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="background:#1b4332; color:white; margin-top:16px">
+    <h3 style="margin-bottom:8px; color:white">💡 Remember</h3>
+    <p style="font-size:13px; line-height:1.7; opacity:0.9">The Sunday review is what keeps the entire system alive. Skip it once and the whole week's follow-ups get missed. Parents who know you review every week will pay faster because they know you are tracking carefully.</p>
+  </div>
+</div>
+
+<script>
+// NAV
+function show(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// TRACKER
+let students = JSON.parse(localStorage.getItem('fee_students') || '[]');
+
+function saveStudents() { localStorage.setItem('fee_students', JSON.stringify(students)); }
+
+function addStudent() {
+  const name = document.getElementById('t-name').value.trim();
+  const child = document.getElementById('t-child').value.trim();
+  const amount = parseInt(document.getElementById('t-amount').value) || 0;
+  const deadline = document.getElementById('t-deadline').value;
+  const status = document.getElementById('t-status').value;
+  const notes = document.getElementById('t-notes').value.trim();
+  if (!name || !amount) { alert('Please enter parent name and amount'); return; }
+  students.push({ id: Date.now(), name, child, amount, deadline, status, notes });
+  saveStudents();
+  renderTracker();
+  ['t-name','t-child','t-amount','t-deadline','t-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('t-status').value = 'pending';
+}
+
+function updateStatus(id, val) {
+  const s = students.find(x => x.id === id);
+  if (s) { s.status = val; saveStudents(); renderTracker(); }
+}
+
+function deleteStudent(id) {
+  if (confirm('Remove this student?')) {
+    students = students.filter(x => x.id !== id);
+    saveStudents(); renderTracker();
+  }
+}
+
+function statusBadge(s) {
+  const map = { paid: 'status-paid', pending: 'status-pending', partial: 'status-partial', promised: 'status-promised' };
+  const lbl = { paid: 'Paid ✅', pending: 'Not Paid ❌', partial: 'Partial ⚠️', promised: 'Promised 🤝' };
+  return `<span class="${map[s] || 'status-pending'}">${lbl[s] || s}</span>`;
+}
+
+function renderTracker() {
+  const tbody = document.getElementById('tracker-body');
+  if (students.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa;padding:20px">Add students above to start tracking</td></tr>';
+    updateSummary();
+    return;
+  }
+  tbody.innerHTML = students.map((s, i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td><b>${s.name}</b></td>
+      <td>${s.child || '-'}</td>
+      <td>₹${s.amount.toLocaleString('en-IN')}</td>
+      <td>${s.deadline || '-'}</td>
+      <td>
+        <select onchange="updateStatus(${s.id}, this.value)" style="border:none;background:none;font-size:12px;cursor:pointer">
+          <option value="pending" ${s.status==='pending'?'selected':''}>Not Paid ❌</option>
+          <option value="partial" ${s.status==='partial'?'selected':''}>Partial ⚠️</option>
+          <option value="promised" ${s.status==='promised'?'selected':''}>Promised 🤝</option>
+          <option value="paid" ${s.status==='paid'?'selected':''}>Paid ✅</option>
+        </select>
+      </td>
+      <td style="max-width:120px;font-size:11px">${s.notes || '-'}</td>
+      <td><button class="btn-small btn-red" onclick="deleteStudent(${s.id})">Remove</button></td>
+    </tr>
+  `).join('');
+  updateSummary();
+}
+
+function updateSummary() {
+  const paid = students.filter(s => s.status === 'paid');
+  const pending = students.filter(s => s.status !== 'paid');
+  const collected = paid.reduce((sum, s) => sum + s.amount, 0);
+  document.getElementById('s-total').textContent = students.length;
+  document.getElementById('s-paid').textContent = paid.length;
+  document.getElementById('s-pending').textContent = pending.length;
+  document.getElementById('s-collected').textContent = '₹' + collected.toLocaleString('en-IN');
+}
+
+renderTracker();
+
+// COPY MSG
+function copyMsg(id, btn) {
+  const text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied ✅';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy Message'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+// CHECKLIST
+function toggleCheck(item) {
+  const cb = item.querySelector('input');
+  cb.checked = !cb.checked;
+  item.classList.toggle('checked', cb.checked);
+}
+
+function resetChecklist() {
+  document.querySelectorAll('.checklist-item').forEach(item => {
+    item.querySelector('input').checked = false;
+    item.classList.remove('checked');
+  });
+}
+</script>
+</body>
+</html>

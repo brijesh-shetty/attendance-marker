@@ -294,6 +294,68 @@ class DatabaseManager {
   async getStudentResources() {
     return (await this.request('/student/resources')).resources;
   }
+
+  async sendExamNotifications(payload) {
+    return this.request('/admin/exam-notifications', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async getExamNotificationLog(date) {
+    return this.request(`/admin/exam-notifications?date=${encodeURIComponent(date)}`);
+  }
+
+  // ── Discontinued students ──────────────────────────────────
+  async discontinueStudent(studentId, reason = '') {
+    return this.request(`/admin/students/${encodeURIComponent(studentId)}/discontinue`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  async reactivateStudent(studentId) {
+    return this.request(`/admin/students/${encodeURIComponent(studentId)}/reactivate`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+  }
+
+  async getDiscontinuedStudents() {
+    return (await this.request('/admin/students/discontinued')).students;
+  }
+
+  // ── Manual fee follow-ups ──────────────────────────────────
+  async startFeeFollowups(studentIds) {
+    return this.request('/admin/fee-followups/start', {
+      method: 'POST',
+      body: JSON.stringify({ studentIds })
+    });
+  }
+
+  async sendFollowupStage(studentId, payload) {
+    return this.request(`/admin/fee-followups/${encodeURIComponent(studentId)}/send`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async getFeeFollowups(status = 'all') {
+    return (await this.request(`/admin/fee-followups?status=${encodeURIComponent(status)}`)).followups;
+  }
+
+  async markFollowupPaid(studentId) {
+    return this.request(`/admin/fee-followups/${encodeURIComponent(studentId)}/mark-paid`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+  }
+
+  async cancelFeeFollowup(studentId) {
+    return this.request(`/admin/fee-followups/${encodeURIComponent(studentId)}`, {
+      method: 'DELETE'
+    });
+  }
 }
 
 export const db = new DatabaseManager();

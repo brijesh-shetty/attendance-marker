@@ -51,7 +51,7 @@
       <div id="batch-list-container" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-top:16px;"></div>
       <div class="card" style="margin-top:14px; padding:12px;">
         <strong>Add New Batch</strong>
-        <form id="batch-form" style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px;">
+        <form id="batch-form" class="form-grid-3" style="margin-top:10px;">
           <input id="batch-number-input" class="input-field" type="number" min="1" placeholder="Batch number" required>
           <input id="batch-year-input" class="input-field" type="number" min="2000" max="2100" placeholder="Academic year" required>
           <select id="batch-grade-input" class="select-field" required><option value="12">Grade 12</option><option value="11">Grade 11</option></select>
@@ -272,14 +272,14 @@
                 <option value="Tuition">Tuition (General)</option>
               </select>
             </div>
-            <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; width: 100%;">
-              <button class="btn btn-secondary" id="download-absentees-btn" style="flex: 1; padding: 8px 12px; font-size: 0.85rem;">
+            <div class="action-button-group">
+              <button class="btn btn-secondary" id="download-absentees-btn">
                 <i data-lucide="download"></i> Download List
               </button>
-              <button class="btn btn-secondary" id="send-to-admin-btn" style="flex: 1.2; padding: 8px 12px; font-size: 0.85rem; border-color: var(--success); color: var(--success);">
+              <button class="btn btn-secondary" id="send-to-admin-btn" style="border-color: var(--success); color: var(--success);">
                 <i data-lucide="send"></i> Send to Admin
               </button>
-              <button class="btn btn-primary" id="send-absentees-sms-btn" style="flex: 1.2; padding: 8px 12px; font-size: 0.85rem; background-color: var(--primary); border-color: var(--primary);">
+              <button class="btn btn-primary" id="send-absentees-sms-btn" style="background-color: var(--primary); border-color: var(--primary);">
                 <i data-lucide="message-square"></i> Send SMS
               </button>
             </div>
@@ -345,7 +345,7 @@
               </div>
             </div>
             
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+            <div class="form-grid-3">
               <div class="input-group" style="margin-bottom: 0;">
                 <label for="test-cet-total">CET Max Marks</label>
                 <input type="number" id="test-cet-total" class="input-field" value="25" min="0" oninput="document.getElementById('test-sum-total').value = (Number(this.value) || 0) + (Number(document.getElementById('test-theory-total').value) || 0)">
@@ -398,15 +398,17 @@
               <span>Marks Entry Form</span>
               <span id="test-average-badge" style="font-size: 0.8rem; background-color: var(--border-color); padding: 2px 8px; border-radius: 12px; display: none;"></span>
             </div>
-            <div class="marks-split-row marks-split-header" style="padding-bottom: 8px; margin-bottom: 8px; border-bottom: 2px solid var(--border-color);">
-              <div style="font-weight: bold; padding-left: 4px;">Student Name</div>
-              <div style="text-align: center; font-weight: bold;">Status</div>
-              <div style="text-align: center; font-weight: bold;" id="header-cet-label">CET /25</div>
-              <div style="text-align: center; font-weight: bold;" id="header-theory-label">Theory /25</div>
-              <div style="text-align: center; font-weight: bold;" id="header-total-label">Total /50</div>
-            </div>
-            <div id="test-students-list">
-              <!-- Rendered by JS -->
+            <div class="table-scroll-container">
+              <div class="marks-split-row marks-split-header" style="padding-bottom: 8px; margin-bottom: 8px; border-bottom: 2px solid var(--border-color);">
+                <div style="font-weight: bold; padding-left: 4px;">Student Name</div>
+                <div style="text-align: center; font-weight: bold;">Status</div>
+                <div style="text-align: center; font-weight: bold;" id="header-cet-label">CET /25</div>
+                <div style="text-align: center; font-weight: bold;" id="header-theory-label">Theory /25</div>
+                <div style="text-align: center; font-weight: bold;" id="header-total-label">Total /50</div>
+              </div>
+              <div id="test-students-list">
+                <!-- Rendered by JS -->
+              </div>
             </div>
             <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
               <div style="display: flex; gap: 8px; width: 100%;">
@@ -429,7 +431,7 @@
         <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Select a student to add each payment received. Fee status is calculated automatically from the total fee and payment history.</p>
 
         <div class="card">
-          <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+          <div class="fee-filter-bar">
             <label for="payment-fee-filter" style="font-size:.8rem; color:var(--text-muted); margin:0;">Show</label>
             <select id="payment-fee-filter" class="select-field" style="font-size:.85rem; min-width:200px;">
               <option value="all">All students</option>
@@ -437,6 +439,10 @@
               <option value="due-under-50">Due less than 50%</option>
             </select>
             <span id="payment-filter-count" style="font-size:.75rem; color:var(--text-muted); margin-left:auto;"></span>
+            <button class="btn btn-secondary" id="view-fees-in-sheets-btn" style="padding:7px 14px; font-size:.8rem; display:flex; align-items:center; gap:5px; white-space:nowrap;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+              View in Sheets
+            </button>
           </div>
 
           <div id="payments-list-container">
@@ -463,7 +469,15 @@
           <div style="display:grid; grid-template-columns:1fr auto; gap:8px; margin-top:12px; align-items:end;">
             <div class="input-group" style="margin:0;">
               <label for="fee-reminder-template-input" style="font-size:.8rem;">Template name (must be approved on Meta)</label>
-              <input type="text" id="fee-reminder-template-input" class="input-field" placeholder="e.g. fee_reminder" value="fee_reminder" autocomplete="off">
+              <select id="fee-reminder-template-input" class="select-field" style="font-size:.85rem;">
+                <option value="fee_reminder">fee_reminder (Partial Payment)</option>
+                <option value="fee_reminder_zero">fee_reminder_zero (0% Paid)</option>
+                <option value="eve_reminder">eve_reminder (1 Day Before Deadline)</option>
+                <option value="deadline_missed">deadline_missed (Deadline Missed)</option>
+                <option value="final_warning">final_warning (Final Warning - 3 Days Late)</option>
+                <option value="balance_reminder">balance_reminder (General Reminder)</option>
+                <option value="payment_thanks">payment_thanks (Thank You Receipt)</option>
+              </select>
             </div>
             <button class="btn btn-primary" id="fee-reminder-send-btn" style="padding:11px 16px; background:#25D366; border-color:#25D366;">
               <i data-lucide="send" style="width:14px; height:14px;"></i> Send
@@ -487,6 +501,94 @@
           <strong style="font-size:.95rem; display:block; margin-bottom:10px;">Batch fees summary</strong>
           <div id="fees-total-summary" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px;">
             <!-- Rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Fee Follow-Up Pipeline -->
+        <div class="card" style="margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <strong style="font-size:.95rem;">📋 Fee Follow-Up Pipeline</strong>
+            <div style="display:flex; gap:6px;">
+              <button class="btn btn-secondary" id="followup-refresh-btn" style="padding:5px 10px; font-size:.75rem;">Refresh</button>
+            </div>
+          </div>
+
+          <!-- Sub-tab navigation -->
+          <div style="display:flex; gap:4px; margin-bottom:12px; border-bottom:1px solid var(--border-color); padding-bottom:8px;">
+            <button class="btn btn-secondary followup-tab-btn active" data-tab="active" style="padding:6px 14px; font-size:.8rem; border-radius:20px;">🟢 Active</button>
+            <button class="btn btn-secondary followup-tab-btn" data-tab="logs" style="padding:6px 14px; font-size:.8rem; border-radius:20px;">📝 Logs</button>
+            <button class="btn btn-secondary followup-tab-btn" data-tab="paid" style="padding:6px 14px; font-size:.8rem; border-radius:20px;">✅ Paid</button>
+          </div>
+
+          <!-- Active follow-ups -->
+          <div id="followup-active-container" class="followup-tab-content">
+            <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+              <button class="btn btn-primary" id="followup-start-btn" style="padding:8px 14px; font-size:.82rem;">
+                <i data-lucide="play" style="width:14px; height:14px;"></i> Start Follow-Up for Selected
+              </button>
+            </div>
+            <div id="followup-active-list">
+              <p style="color:var(--text-muted); font-size:.8rem; margin:0;">No active follow-ups.</p>
+            </div>
+          </div>
+
+          <!-- Message logs -->
+          <div id="followup-logs-container" class="followup-tab-content" style="display:none;">
+            <div id="followup-logs-list">
+              <p style="color:var(--text-muted); font-size:.8rem; margin:0;">No follow-up messages sent yet.</p>
+            </div>
+          </div>
+
+          <!-- Paid after follow-up -->
+          <div id="followup-paid-container" class="followup-tab-content" style="display:none;">
+            <div id="followup-paid-summary" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:12px;"></div>
+            <div id="followup-paid-list">
+              <p style="color:var(--text-muted); font-size:.8rem; margin:0;">No students have paid through follow-ups yet.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- DISCONTINUED STUDENTS VIEW -->
+      <section id="discontinued-view" class="view-section">
+        <h2><i data-lucide="user-x" style="width:20px; height:20px; vertical-align: text-bottom; color: var(--danger);"></i> Discontinued Students</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Students who have been discontinued. Their data is preserved and they can be reactivated at any time.</p>
+
+        <div id="discontinued-summary" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:14px;"></div>
+
+        <div class="card" style="padding:0;">
+          <div id="discontinued-list-container">
+            <p style="text-align:center; color:var(--text-muted); padding:30px;">Loading discontinued students...</p>
+          </div>
+        </div>
+
+        <!-- Discontinued student detail panel -->
+        <div id="discontinued-detail-panel" style="display:none; margin-top:14px;">
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3 id="disc-detail-name" style="margin:0;"></h3>
+              <button class="btn btn-secondary" id="disc-detail-close-btn" style="padding:4px 10px; font-size:.78rem;">✕ Close</button>
+            </div>
+            <div style="font-size:.82rem; color:var(--text-muted); margin-bottom:12px;">
+              <span id="disc-detail-reason"></span> · <span id="disc-detail-date"></span>
+            </div>
+
+            <!-- Tab navigation for detail -->
+            <div style="display:flex; gap:4px; margin-bottom:12px; border-bottom:1px solid var(--border-color); padding-bottom:8px;">
+              <button class="btn btn-secondary disc-detail-tab active" data-tab="payment" style="padding:5px 12px; font-size:.78rem; border-radius:20px;">💰 Payments</button>
+              <button class="btn btn-secondary disc-detail-tab" data-tab="attendance" style="padding:5px 12px; font-size:.78rem; border-radius:20px;">📅 Attendance</button>
+              <button class="btn btn-secondary disc-detail-tab" data-tab="marks" style="padding:5px 12px; font-size:.78rem; border-radius:20px;">📝 Marks</button>
+            </div>
+
+            <div id="disc-detail-payment" class="disc-detail-content"></div>
+            <div id="disc-detail-attendance" class="disc-detail-content" style="display:none;"></div>
+            <div id="disc-detail-marks" class="disc-detail-content" style="display:none;"></div>
+
+            <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 14px; display: flex; gap: 10px;">
+              <button class="btn btn-primary" id="disc-reactivate-btn" style="flex:1;">
+                <i data-lucide="user-check" style="width:14px; height:14px;"></i> Re-activate Student
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -528,6 +630,111 @@
         </div>
       </section>
 
+      <!-- 8. EXAM NOTIFICATIONS VIEW -->
+      <section id="exams-view" class="view-section">
+        <h2><i data-lucide="book-open" style="width:20px; height:20px; vertical-align: text-bottom; color: var(--primary);"></i> Exam Notifications</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">Send examination schedule to parents via WhatsApp. Select dates, pick students, and send.</p>
+
+        <!-- Exam Setup -->
+        <div class="card" style="margin-bottom: 14px;">
+          <div class="card-title">
+            <span>Examination Schedule</span>
+            <i data-lucide="calendar-check" style="color: var(--primary-hover); width: 18px; height: 18px;"></i>
+          </div>
+
+          <div class="input-group" style="margin-bottom: 12px;">
+            <label for="exam-type-select" style="font-size: 0.85rem; font-weight: 600;">Exam Type</label>
+            <select id="exam-type-select" class="select-field">
+              <option value="Mid-Term">Mid-Term Examination</option>
+              <option value="Final">Final Examination</option>
+              <option value="Unit Test">Unit Test</option>
+              <option value="Preparatory">Preparatory Examination</option>
+            </select>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="input-group" style="margin-bottom: 0;">
+              <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">1. Physics</label>
+              <input type="date" id="exam-date-physics" class="input-field">
+            </div>
+            <div class="input-group" style="margin-bottom: 0;">
+              <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">2. Chemistry</label>
+              <input type="date" id="exam-date-chemistry" class="input-field">
+            </div>
+            <div class="input-group" style="margin-bottom: 0;">
+              <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">3. Maths</label>
+              <input type="date" id="exam-date-maths" class="input-field">
+            </div>
+            <div class="input-group" style="margin-bottom: 0;">
+              <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">4. Bio / CS</label>
+              <input type="date" id="exam-date-biocs" class="input-field">
+            </div>
+          </div>
+        </div>
+
+        <!-- Message Preview -->
+        <div class="card" style="margin-bottom: 14px;">
+          <div class="card-title">
+            <span>Message Preview</span>
+            <i data-lucide="eye" style="color: var(--primary-hover); width: 18px; height: 18px;"></i>
+          </div>
+          <div id="exam-message-preview" style="font-size: 0.85rem; line-height: 1.6; white-space: pre-wrap; background: rgba(0,0,0,0.15); padding: 14px; border-radius: var(--radius-sm); color: var(--text-main); font-family: monospace; border: 1px solid var(--border-color);">
+            Fill in all 4 exam dates above to see the message preview.
+          </div>
+          <button class="btn btn-secondary" id="exam-copy-preview-btn" style="margin-top: 10px; padding: 6px 12px; font-size: 0.82rem;">
+            <i data-lucide="copy" style="width: 14px; height: 14px;"></i> Copy Message
+          </button>
+        </div>
+
+        <!-- Student Selection -->
+        <div class="card" style="margin-bottom: 14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <strong style="font-size:.95rem;">Select Students</strong>
+            <span id="exam-student-selection-count" style="font-size:.72rem; color:var(--text-muted);">0 selected</span>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+            <button class="btn btn-secondary" id="exam-select-all-btn" style="padding:7px 12px; font-size:.8rem;">Select All</button>
+            <button class="btn btn-secondary" id="exam-deselect-all-btn" style="padding:7px 12px; font-size:.8rem;">Deselect All</button>
+          </div>
+
+          <div id="exam-student-list" style="max-height:250px; overflow-y:auto; border:1px solid var(--border-color); border-radius:8px; padding:6px;">
+            <p style="color:var(--text-muted); font-size:.8rem; text-align:center; padding:12px;">Loading students...</p>
+          </div>
+        </div>
+
+        <!-- Send Controls -->
+        <div class="card" style="margin-bottom: 14px;">
+          <div class="card-title">
+            <span>Send via WhatsApp</span>
+            <i data-lucide="send" style="color: #25D366; width: 18px; height: 18px;"></i>
+          </div>
+          <div class="input-group" style="margin-bottom: 12px;">
+            <label for="exam-template-name-input" style="font-size: 0.82rem; font-weight: 600;">Template Name (must be approved on Meta)</label>
+            <input type="text" id="exam-template-name-input" class="input-field" placeholder="e.g. exam_schedule" value="exam_schedule" autocomplete="off">
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-primary" id="exam-send-btn" style="flex: 1.5; padding: 11px 16px; background: #25D366; border-color: #25D366;">
+              <i data-lucide="send" style="width:14px; height:14px;"></i> Send to Selected
+            </button>
+            <button class="btn btn-secondary" id="exam-open-whatsapp-btn" style="flex: 1; padding: 11px 16px;">
+              <i data-lucide="message-circle" style="width:14px; height:14px;"></i> Open WhatsApp
+            </button>
+          </div>
+        </div>
+
+        <!-- Send Log -->
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">
+            <strong style="font-size:.95rem;">Today's Send Log</strong>
+            <button class="btn btn-secondary" id="exam-log-refresh-btn" style="padding:5px 10px; font-size:.75rem;">Refresh</button>
+          </div>
+          <div id="exam-notification-log-container">
+            <p style="color:var(--text-muted); font-size:.8rem; margin:0;">No exam notifications sent today.</p>
+          </div>
+        </div>
+      </section>
+
     </main>
 
     <!-- Bottom Navigation Bar -->
@@ -548,19 +755,57 @@
         <i data-lucide="file-text"></i>
         <span>Tests</span>
       </div>
+      <div class="nav-item nav-hide-mobile" data-view="exams">
+        <i data-lucide="book-open"></i>
+        <span>Exams</span>
+      </div>
       <div class="nav-item" data-view="payments">
         <i data-lucide="credit-card"></i>
         <span>Fees</span>
       </div>
-      <div class="nav-item" data-view="resources">
+      <div class="nav-item nav-hide-mobile" data-view="discontinued">
+        <i data-lucide="user-x"></i>
+        <span>Dropped</span>
+      </div>
+      <div class="nav-item nav-hide-mobile" data-view="resources">
         <i data-lucide="folder-down"></i>
         <span>Files</span>
       </div>
-      <div class="nav-item" data-view="replies">
+      <div class="nav-item nav-hide-mobile" data-view="replies">
         <i data-lucide="message-circle"></i>
         <span>Replies</span>
       </div>
+      <!-- More button visible only on mobile -->
+      <div class="nav-item nav-more-btn" id="nav-more-toggle">
+        <i data-lucide="menu"></i>
+        <span>More</span>
+      </div>
     </nav>
+
+    <!-- Mobile "More" Dropdown Overlay -->
+    <div class="nav-more-overlay" id="nav-more-overlay"></div>
+    <div class="nav-more-dropdown" id="nav-more-dropdown">
+      <div class="nav-more-header">
+        <span>More Options</span>
+        <button type="button" class="nav-more-close-btn" id="nav-more-close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="nav-more-item" data-view="exams">
+        <i data-lucide="book-open"></i>
+        <span>Exam Notifications</span>
+      </div>
+      <div class="nav-more-item" data-view="discontinued">
+        <i data-lucide="user-x"></i>
+        <span>Discontinued Students</span>
+      </div>
+      <div class="nav-more-item" data-view="resources">
+        <i data-lucide="folder-down"></i>
+        <span>Study Resources & Files</span>
+      </div>
+      <div class="nav-more-item" data-view="replies">
+        <i data-lucide="message-circle"></i>
+        <span>Parent Conversations</span>
+      </div>
+    </div>
 
     <!-- Full-screen Parent Conversation (Chat) Screen -->
     <div id="chat-screen" class="chat-screen no-print" aria-hidden="true">
@@ -753,6 +998,9 @@
             <button class="btn btn-secondary" id="detail-edit-btn" style="flex: 1;">
               <i data-lucide="edit-2"></i> Edit Profile
             </button>
+            <button class="btn" id="detail-discontinue-btn" style="flex: 1; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b;">
+              <i data-lucide="user-x"></i> Discontinue
+            </button>
             <button class="btn btn-danger" id="detail-delete-btn" style="flex: 1;">
               <i data-lucide="trash-2"></i> Delete
             </button>
@@ -788,11 +1036,11 @@
 
     <!-- Send Absentee Report to Sir Modal -->
     <div class="modal" id="send-admin-modal">
-      <div class="modal-content" style="max-width: 560px;">
+      <div class="modal-content admin-msg-modal" style="max-width: 560px;">
         <div class="modal-header">
           <div style="display: flex; align-items: center; gap: 8px;">
             <i data-lucide="send" style="color: var(--success); width: 22px; height: 22px;"></i>
-            <h3 style="font-size: 1.15rem; font-weight: 700;">Send Daily Absentee Report to Admin</h3>
+            <h3 class="admin-msg-title">Send Daily Absentee Report to Admin</h3>
           </div>
           <span class="modal-close" id="send-admin-modal-close"><i data-lucide="x"></i></span>
         </div>
@@ -802,7 +1050,7 @@
         </p>
 
         <!-- Admin Name & Phone Inputs -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+        <div class="admin-msg-grid-2" style="margin-bottom: 10px;">
           <div class="input-group" style="margin-bottom: 0;">
             <label for="admin-name-input" style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">
               Admin / Recipient Name
@@ -833,7 +1081,7 @@
         </div>
 
         <!-- Subject Selector & Meta Template Name Customization -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+        <div class="admin-msg-grid-2" style="margin-bottom: 14px;">
           <div class="input-group" style="margin-bottom: 0;">
             <label for="admin-subject-select" style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">
               Class Subject
@@ -860,20 +1108,12 @@
             <span>Report Message (Editable)</span>
             <button type="button" class="btn btn-secondary btn-sm" id="reset-admin-template-btn" style="font-size: 0.72rem; padding: 2px 8px; font-weight: normal;">
               <i data-lucide="rotate-ccw" style="width: 12px; height: 12px;"></i> Reset Text
-          </div>
-        </div>
-
-        <div class="input-group">
-          <label for="admin-report-template" style="font-size: 0.85rem; font-weight: 600; color: var(--text-main); display: flex; justify-content: space-between; align-items: center;">
-            <span>Report Message (Editable)</span>
-            <button type="button" class="btn btn-secondary btn-sm" id="reset-admin-template-btn" style="font-size: 0.72rem; padding: 2px 8px; font-weight: normal;">
-              <i data-lucide="rotate-ccw" style="width: 12px; height: 12px;"></i> Reset Text
             </button>
           </label>
           <textarea id="admin-report-template" class="input-field" rows="8" style="font-family: monospace; font-size: 0.85rem; line-height: 1.4; resize: vertical; background: rgba(0,0,0,0.15);"></textarea>
         </div>
 
-        <div style="display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap;">
+        <div class="admin-msg-actions">
           <button class="btn btn-secondary" id="copy-admin-report-btn" style="flex: 1; padding: 10px 12px; font-size: 0.82rem;">
             <i data-lucide="copy"></i> Copy Text
           </button>
@@ -932,6 +1172,85 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Follow-Up Send Stage Modal -->
+    <div class="modal" id="followup-stage-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; padding:16px;">
+      <div class="card" style="width:100%; max-width:480px; padding:24px; position:relative;">
+        <button type="button" id="followup-stage-modal-close" style="position:absolute; top:16px; right:16px; background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:1.2rem;">&times;</button>
+        <h3 style="margin-top:0; display:flex; align-items:center; gap:8px;">
+          <i data-lucide="send" style="color:var(--primary); width:20px; height:20px;"></i>
+          <span id="followup-stage-modal-title">Send Follow-Up Stage</span>
+        </h3>
+        <p id="followup-stage-modal-desc" style="font-size:0.82rem; color:var(--text-muted); margin-bottom:16px;"></p>
+
+        <form id="followup-stage-form">
+          <input type="hidden" id="followup-stage-student-id">
+          <input type="hidden" id="followup-stage-number">
+
+          <div class="input-group" style="margin-bottom:12px;">
+            <label style="font-size:0.82rem; font-weight:600;">Student</label>
+            <input type="text" id="followup-stage-student-name" class="input-field" readonly style="background:var(--bg-secondary); font-size:0.85rem;">
+          </div>
+
+          <div class="input-group" style="margin-bottom:12px;">
+            <label style="font-size:0.82rem; font-weight:600;">Action</label>
+            <select id="followup-stage-action" class="select-field" style="font-size:0.85rem;">
+              <option value="whatsapp_template">📱 Send WhatsApp Template</option>
+              <option value="whatsapp_personal">💬 Send Personal WhatsApp</option>
+              <option value="phone_call">📞 Log Phone Call</option>
+              <option value="face_to_face">🤝 Log Face-to-Face Meeting</option>
+            </select>
+          </div>
+
+          <div id="followup-stage-template-group" class="input-group" style="margin-bottom:12px;">
+            <label style="font-size:0.82rem; font-weight:600;">Template Name</label>
+            <select id="followup-stage-template" class="select-field" style="font-size:0.85rem;">
+              <option value="fee_reminder">fee_reminder (Partial Payment)</option>
+              <option value="fee_reminder_zero">fee_reminder_zero (0% Paid)</option>
+              <option value="eve_reminder">eve_reminder (1 Day Before Deadline)</option>
+              <option value="deadline_missed">deadline_missed (Deadline Missed)</option>
+              <option value="final_warning">final_warning (Final Warning - 3 Days Late)</option>
+              <option value="balance_reminder">balance_reminder (General Reminder)</option>
+              <option value="payment_thanks">payment_thanks (Thank You Receipt)</option>
+            </select>
+          </div>
+
+          <div class="input-group" style="margin-bottom:16px;">
+            <label style="font-size:0.82rem; font-weight:600;">Note (optional)</label>
+            <textarea id="followup-stage-note" class="input-field" rows="2" placeholder="e.g. Parent said will pay by Friday" style="font-size:0.85rem; resize:vertical;"></textarea>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button type="button" class="btn btn-secondary" id="followup-stage-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="followup-stage-submit">
+              <i data-lucide="send" style="width:14px; height:14px;"></i> <span id="followup-stage-submit-label">Send Now</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Discontinue Confirmation Modal -->
+    <div class="modal" id="discontinue-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; padding:16px;">
+      <div class="card" style="width:100%; max-width:420px; padding:24px; position:relative;">
+        <h3 style="margin-top:0; display:flex; align-items:center; gap:8px; color:#f59e0b;">
+          <i data-lucide="user-x" style="width:20px; height:20px;"></i>
+          Discontinue Student
+        </h3>
+        <p id="discontinue-modal-desc" style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;"></p>
+        <input type="hidden" id="discontinue-student-id">
+        <div class="input-group" style="margin-bottom:16px;">
+          <label style="font-size:0.82rem; font-weight:600;">Reason (optional)</label>
+          <textarea id="discontinue-reason" class="input-field" rows="2" placeholder="e.g. Financial difficulty, moved away, etc." style="font-size:0.85rem; resize:vertical;"></textarea>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+          <button type="button" class="btn btn-secondary" id="discontinue-cancel-btn">Cancel</button>
+          <button type="button" class="btn" id="discontinue-confirm-btn" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; font-weight:700;">
+            <i data-lucide="user-x" style="width:14px; height:14px;"></i> Confirm Discontinue
+          </button>
+        </div>
       </div>
     </div>
 

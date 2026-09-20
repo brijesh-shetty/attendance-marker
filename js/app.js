@@ -15,7 +15,9 @@ class AppController {
       tests: document.getElementById("tests-view"),
       payments: document.getElementById("payments-view"),
       resources: document.getElementById("resources-view"),
-      replies: document.getElementById("replies-view")
+      replies: document.getElementById("replies-view"),
+      exams: document.getElementById("exams-view"),
+      discontinued: document.getElementById("discontinued-view")
     };
 
     this.navItems = document.querySelectorAll(".bottom-nav .nav-item");
@@ -198,13 +200,21 @@ class AppController {
     // Activate selected states
     this.views[viewName].classList.add("active");
     const activeNav = document.querySelector(`.bottom-nav .nav-item[data-view="${viewName}"]`);
-    if (activeNav) activeNav.classList.add("active");
+    if (activeNav) {
+      activeNav.classList.add("active");
+      // If the matched nav-item is hidden on mobile (nav-hide-mobile), highlight "More" button instead
+      if (activeNav.classList.contains("nav-hide-mobile")) {
+        const moreBtn = document.getElementById("nav-more-toggle");
+        if (moreBtn) moreBtn.classList.add("active");
+      }
+    }
 
     this.currentView = viewName;
 
     // Refresh page data
     this.refreshViewData(viewName);
   }
+
 
   async refreshViewData(viewName) {
     switch (viewName) {
@@ -219,6 +229,7 @@ class AppController {
         break;
       case "payments":
         await this.loadPaymentsList();
+        await this.loadFeeFollowups();
         break;
       case "resources":
         await this.loadAdminResources();
@@ -234,6 +245,12 @@ class AppController {
         break;
       case "replies":
         await this.loadReplies();
+        break;
+      case "exams":
+        await this.loadExamNotificationView();
+        break;
+      case "discontinued":
+        await this.loadDiscontinuedStudents();
         break;
     }
     lucide.createIcons();
@@ -446,13 +463,115 @@ class AppController {
     return { label: 'PARTIALLY PAID', color: '#f59e0b', background: 'rgba(245,158,11,.12)' };
   }
 
+  /**
+   * Export fee data to Google Sheets.
+   * Generates a spreadsheet with: Student Name, Total Fee, Due As Of Today,
+   * Installment 1, Installment 2, ... Installment N (amounts only).
+   * On mobile: uses Web Share API so user can open directly in Google Sheets.
+   * On desktop: downloads CSV file that can be opened in Google Sheets.
+   */
+  async openFeesInGoogleSheets() {
+    const summaries = this.paymentSummaries;
+    if (!summaries || summaries.length === 0) {
+      this.showToast('No fee data available. Please wait for the payments list to load.', 'danger');
+      return;
+    }
+
+    // Find the maximum number of installments (transactions) across all students
+    const maxInstallments = summaries.reduce((max, item) => Math.max(max, item.transactions.length), 0);
+
+    // Build the header row
+    const headers = ['Student Name', 'Total Fee (₹)', 'Paid (₹)', 'Due As Of Today (₹)'];
+    for (let i = 1; i <= maxInstallments; i++) {
+      headers.push(`Installment ${i} (₹)`);
+    }
+
+    // Build data rows
+    const rows = summaries.map(item => {
+      const row = [
+        item.student.name,
+        item.totalFee,
+        item.paid,
+        item.balance
+      ];
+      // Add each installment amount (sorted chronologically)
+      const sortedTxns = [...item.transactions].sort((a, b) =>
+        String(a.date || '').localeCompare(String(b.date || ''))
+      );
+      for (let i = 0; i < maxInstallments; i++) {
+        if (i < sortedTxns.length) {
+          row.push(Number(sortedTxns[i].amount) || 0);
+        } else {
+          row.push('');
+        }
+      }
+      return row;
+    });
+
+    // Build CSV
+    const escapeCSV = (val) => {
+      const str = String(val);
+      if (str.includes(',') || str.includes('\n') || str.includes('"')) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    };
+
+    const csvLines = [headers.map(escapeCSV).join(',')];
+    rows.forEach(row => csvLines.push(row.map(escapeCSV).join(',')));
+    const csv = csvLines.join('\n');
+
+    const today = this.getLocalDateString();
+    const fileName = `Fee_Report_${today}.csv`;
+    const csvBlob = new Blob([csv], { type: 'text/csv' });
+    const csvFile = new File([csvBlob], fileName, { type: 'text/csv' });
+
+    // Detect mobile: has touch AND narrow viewport
+    const isMobile = ('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth < 768;
+
+    // Mobile: use Web Share API so user can "Open with Google Sheets" directly
+    if (isMobile && navigator.canShare && navigator.canShare({ files: [csvFile] })) {
+      try {
+        await navigator.share({
+          title: `Fee Report - ${today}`,
+          files: [csvFile]
+        });
+        this.showToast('Fee report shared!');
+        return;
+      } catch (err) {
+        // User cancelled share or share failed — fall through to download
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    // Desktop / fallback: download the CSV file
+    const url = URL.createObjectURL(csvBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    this.showToast(`Downloaded ${fileName} — open it in Google Sheets.`);
+  }
+
   showPaymentStudentDetail(item, detail) {
     const { student, paymentData, transactions, totalFee, paid, balance } = item;
     const state = this.getFeePaymentState(paid, totalFee);
     const history = transactions.map((transaction, index) => ({ transaction, index })).sort((a, b) => String(b.transaction.date || '').localeCompare(String(a.transaction.date || '')) || (Number(b.transaction.recordedAt) || 0) - (Number(a.transaction.recordedAt) || 0));
     const historyHtml = history.length ? history.map(({ transaction, index }) => `<div style="display:grid; grid-template-columns:1fr auto; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color);"><div><strong style="font-size:.82rem;">${this.escapeHtml(transaction.date)}</strong>${transaction.note ? `<div style="font-size:.75rem; color:var(--text-muted); margin-top:2px;">${this.escapeHtml(transaction.note)}</div>` : ''}</div><div style="display:flex; align-items:center; gap:6px;"><strong style="color:var(--success);">${this.formatCurrency(transaction.amount)}</strong><button class="btn btn-secondary edit-payment-btn" data-index="${index}" style="padding:4px 7px; font-size:.72rem;">Edit</button><button class="btn btn-danger delete-payment-btn" data-index="${index}" style="padding:4px 7px; font-size:.72rem;">Delete</button></div></div>`).join('') : '<p style="color:var(--text-muted); font-size:.8rem; margin:8px 0 0;">No payments recorded yet.</p>';
     detail.style.display = 'block';
-    detail.innerHTML = `<div class="card" style="padding:14px; border-left:4px solid ${state.color};"><div style="display:flex; justify-content:space-between; gap:8px;"><div><h3 style="margin:0; font-size:1rem;">${this.escapeHtml(student.name)}</h3><span style="font-size:.75rem; color:${state.color}; font-weight:700;">${state.label}</span></div><button class="btn btn-secondary close-fee-detail-btn" style="padding:5px 9px;">Close</button></div><div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-top:12px;"><div><small>Total fee</small><strong style="display:block;">${this.formatCurrency(totalFee)}</strong></div><div><small>Received fee</small><strong style="display:block; color:var(--success);">${this.formatCurrency(paid)}</strong></div><div><small>${balance > 0 ? 'Due' : 'Status'}</small><strong style="display:block; color:${state.color};">${balance > 0 ? this.formatCurrency(balance) : 'Paid in full'}</strong></div></div><div style="display:flex; gap:8px; margin-top:12px; align-items:end;"><div class="input-group" style="margin:0; flex:1;"><label>Total fee</label><input class="input-field detail-total-fee" type="number" min="0" step="0.01" value="${totalFee}"></div><button class="btn btn-secondary save-total-fee-btn" style="padding:9px 12px;">Save Total</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Add payment received</strong><div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;"><div class="input-group" style="margin:0;"><label>Payment date</label><input class="input-field detail-payment-date" type="date" value="${this.getLocalDateString()}"></div><div class="input-group" style="margin:0;"><label>Paid amount</label><input class="input-field detail-amount" type="number" min="0.01" step="0.01" placeholder="0.00"></div></div><div class="input-group" style="margin-top:8px;"><label>Note (optional)</label><input class="input-field detail-notes" maxlength="300" placeholder="e.g. UPI reference / instalment"></div><button class="btn btn-primary btn-full add-payment-btn" style="margin-top:8px;">Add Payment</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Payment history</strong>${historyHtml}<div class="payment-edit-container"></div></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:.85rem;">Parent Message Preview</strong><span style="font-size:.72rem; color:var(--text-muted);">${paymentData.lastFeeMessage ? `Last sent: ${this.escapeHtml(paymentData.lastFeeMessage.template || 'template')} · ${new Date(paymentData.lastFeeMessage.sentAt).toLocaleDateString('en-IN')}` : 'Not sent yet'}</span></div><select class="select-field detail-template" style="margin-top:8px;"><option value="balance_reminder">Balance reminder</option><option value="payment_thanks">Payment received / thank you</option><option value="fee_reminder">Fee reminder</option></select><div class="detail-preview" style="margin-top:8px; padding:9px; border-radius:7px; background:rgba(255,255,255,.04); font-size:.8rem; line-height:1.45;"></div><button class="btn btn-secondary btn-full copy-detail-message-btn" style="margin-top:8px;">Copy Preview for Review</button></div></div>`;
+    detail.innerHTML = `<div class="card" style="padding:14px; border-left:4px solid ${state.color};"><div style="display:flex; justify-content:space-between; gap:8px;"><div><h3 style="margin:0; font-size:1rem;">${this.escapeHtml(student.name)}</h3><span style="font-size:.75rem; color:${state.color}; font-weight:700;">${state.label}</span></div><button class="btn btn-secondary close-fee-detail-btn" style="padding:5px 9px;">Close</button></div><div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-top:12px;"><div><small>Total fee</small><strong style="display:block;">${this.formatCurrency(totalFee)}</strong></div><div><small>Received fee</small><strong style="display:block; color:var(--success);">${this.formatCurrency(paid)}</strong></div><div><small>${balance > 0 ? 'Due' : 'Status'}</small><strong style="display:block; color:${state.color};">${balance > 0 ? this.formatCurrency(balance) : 'Paid in full'}</strong></div></div><div style="display:flex; gap:8px; margin-top:12px; align-items:end;"><div class="input-group" style="margin:0; flex:1;"><label>Total fee</label><input class="input-field detail-total-fee" type="number" min="0" step="0.01" value="${totalFee}"></div><button class="btn btn-secondary save-total-fee-btn" style="padding:9px 12px;">Save Total</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Add payment received</strong><div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;"><div class="input-group" style="margin:0;"><label>Payment date</label><input class="input-field detail-payment-date" type="date" value="${this.getLocalDateString()}"></div><div class="input-group" style="margin:0;"><label>Paid amount</label><input class="input-field detail-amount" type="number" min="0.01" step="0.01" placeholder="0.00"></div></div><div class="input-group" style="margin-top:8px;"><label>Note (optional)</label><input class="input-field detail-notes" maxlength="300" placeholder="e.g. UPI reference / instalment"></div><button class="btn btn-primary btn-full add-payment-btn" style="margin-top:8px;">Add Payment</button></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><strong style="font-size:.88rem;">Payment history</strong>${historyHtml}<div class="payment-edit-container"></div></div><div style="border-top:1px solid var(--border-color); margin-top:14px; padding-top:12px;"><div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:.85rem;">Parent Message Preview</strong><span style="font-size:.72rem; color:var(--text-muted);">${paymentData.lastFeeMessage ? `Last sent: ${this.escapeHtml(paymentData.lastFeeMessage.template || 'template')} · ${new Date(paymentData.lastFeeMessage.sentAt).toLocaleDateString('en-IN')}` : 'Not sent yet'}</span></div>      <select class="select-field detail-template" style="margin-top:8px;">
+        <option value="fee_reminder">Fee reminder (Partial paid)</option>
+        <option value="fee_reminder_zero">Fee reminder (0% paid)</option>
+        <option value="eve_reminder">Eve reminder (1 day before deadline)</option>
+        <option value="deadline_missed">Deadline missed (Same day follow-up)</option>
+        <option value="final_warning">Final warning (3 days after deadline)</option>
+        <option value="balance_reminder">Balance reminder</option>
+        <option value="payment_thanks">Payment received / thank you</option>
+      </select><div class="detail-preview" style="margin-top:8px; padding:9px; border-radius:7px; background:rgba(255,255,255,.04); font-size:.8rem; line-height:1.45;"></div><button class="btn btn-secondary btn-full copy-detail-message-btn" style="margin-top:8px;">Copy Preview for Review</button></div></div>`;
     const totalInput = detail.querySelector('.detail-total-fee'); const template = detail.querySelector('.detail-template'); const preview = detail.querySelector('.detail-preview');
     const render = () => { const newTotal = Number(totalInput.value) || 0; preview.textContent = this.buildFeeMessage(template.value, student, { totalFee: newTotal, paid, balance: Math.max(newTotal - paid, 0) }); };
     [totalInput, template].forEach(control => control.addEventListener('input', render)); render();
@@ -729,6 +848,17 @@ class AppController {
         newDeleteBtn.addEventListener("click", () => {
           this.handleDeleteStudent(studentId);
         });
+
+        // Discontinue button
+        const discBtn = document.getElementById("detail-discontinue-btn");
+        if (discBtn) {
+          const newDiscBtn = discBtn.cloneNode(true);
+          discBtn.parentNode.replaceChild(newDiscBtn, discBtn);
+          newDiscBtn.addEventListener("click", () => {
+            modal.classList.remove("active");
+            this.openDiscontinueModal(studentId, student.name);
+          });
+        }
 
         modal.classList.add("active");
         lucide.createIcons();
@@ -2111,10 +2241,17 @@ class AppController {
     const paid = this.formatCurrency(totals.paid);
     const balance = this.formatCurrency(totals.balance);
     const totalFee = this.formatCurrency(totals.totalFee);
+    const deadline = totals.deadline || '[DATE]';
     const templates = {
       balance_reminder: `Dear Parent, this is a fee update for ${name}. Total tuition fee: ${totalFee}. Amount received: ${paid}. Outstanding balance: ${balance}. Please contact Galaxy Academy if you need any clarification.`,
       payment_thanks: `Dear Parent, thank you for the fee payment for ${name}. Total tuition fee: ${totalFee}. Amount received so far: ${paid}. Remaining balance: ${balance}. Regards, Galaxy Academy.`,
-      fee_reminder: `Dear Parent, this is a fee reminder for ${name}. Amount received so far: ${paid}. Outstanding balance: ${balance}. Please make the payment at your convenience. Regards, Galaxy Academy.`
+      fee_reminder: `Dear parent of ${name} 🙏\n\nHope your child is doing well in their studies!\n\nThis is a gentle reminder regarding the pending fee balance.\n\n💰 Total Fee: ${totalFee}\n✅ Received: ${paid}\n⏳ Balance Due: ${balance}\n📅 Due Date: ${deadline}\n\nKindly clear the balance before ${deadline} to ensure uninterrupted classes.\n\n💳 UPI / Cash accepted at the centre.\n\nFor queries, message us personally. Thank you! 🌟\n\n— Galaxy Academy 📚`,
+      fee_reminder_zero: `Dear parent of ${name} 🙏\n\nHope your child is doing well!\n\nWe noticed that no fee payment has been received yet for this term.\n\n💰 Total Fee: ${totalFee}\n❌ Received: ₹0\n⏳ Full Amount Due: ${balance}\n📅 Due Date: ${deadline}\n\nKindly arrange at least a partial payment before ${deadline}. Even installments are welcome.\n\n💳 UPI / Cash accepted at the centre.\n\nFor queries or to discuss a payment plan, message us personally. Thank you! 🙏\n\n— Galaxy Academy 📚`,
+      fee_followup_personal: `Dear parent of ${name} 🙏\n\nThank you for the payment of ${paid} received so far! ${name} is doing really well and we are happy to have them.\n\nJust a gentle reminder — the remaining fee balance of ${balance} is still pending.\n\nKindly arrange the payment before ${deadline}.\n🔹 Even partial payment is fine\n🔹 Monthly installments can be arranged\n\n💳 UPI / Cash at centre\n\nPlease reply to this message or call us to discuss. Thank you! 🙏\n\n— Galaxy Academy 📚`,
+      fee_followup_personal_zero: `Dear parent of ${name} 🙏\n\nHope ${name} is doing well in their studies!\n\nWe wanted to personally reach out regarding the fee for this term. As of now, the full fee of ${totalFee} is still pending.\n\nWe completely understand that finances need planning. Please let us know:\n🔹 Can you arrange a partial payment before ${deadline}?\n🔹 Would monthly installments work better?\n\nWe want to ensure ${name}'s classes continue without interruption and are happy to work out a comfortable plan.\n\n💳 UPI / Cash at centre\n\nThank you for your trust! 🙏\n\n— Galaxy Academy 📚`,
+      eve_reminder: `Dear parent of ${name} 🙏\n\nJust a reminder that tomorrow ${deadline} is the last date for the fee payment.\n\n⏳ Balance Due: ${balance}\n\nKindly arrange today itself to avoid any interruption to classes.\n\n💳 UPI / Cash accepted at the centre.\n\nThank you! 🙏\n\n— Galaxy Academy 📚`,
+      deadline_missed: `Dear parent of ${name} 🙏\n\nToday ${deadline} was the last date for the fee payment of ${balance}.\n\nRequest you to kindly arrange the payment by tomorrow morning. Please confirm when you can pay.\n\n💳 UPI / Cash accepted at the centre.\n\nThank you for your understanding. 🙏\n\n— Galaxy Academy 📚`,
+      final_warning: `Dear parent of ${name} 🙏\n\nThe fee balance of ${balance} for ${name}'s classes is now significantly overdue. The deadline was ${deadline}.\n\nRequest you to kindly arrange payment immediately to ensure ${name}'s classes continue without any interruption.\n\nPlease respond today. Thank you. 🙏\n\n— Galaxy Academy 📚`
     };
     return templates[template] || templates.balance_reminder;
   }
@@ -2358,12 +2495,95 @@ class AppController {
     this.navItems.forEach(item => {
       item.addEventListener("click", () => {
         const view = item.getAttribute("data-view");
-        this.switchView(view);
+        if (view) this.switchView(view);
       });
     });
     document.getElementById("quick-attendance-btn").addEventListener("click", () => this.switchView("attendance"));
     document.getElementById("quick-tests-btn").addEventListener("click", () => this.switchView("tests"));
     document.getElementById("quick-payments-btn").addEventListener("click", () => this.switchView("payments"));
+
+    // Mobile "More" dropdown toggle
+    const moreToggle = document.getElementById("nav-more-toggle");
+    const moreDropdown = document.getElementById("nav-more-dropdown");
+    const moreOverlay = document.getElementById("nav-more-overlay");
+    const moreClose = document.getElementById("nav-more-close");
+
+    const openMoreDropdown = () => {
+      moreDropdown.classList.add("active");
+      moreOverlay.classList.add("active");
+      // Highlight the currently active view in the More list
+      const moreItems = moreDropdown.querySelectorAll(".nav-more-item");
+      moreItems.forEach(mi => {
+        mi.classList.toggle("active-view", mi.dataset.view === this.currentView);
+      });
+    };
+    const closeMoreDropdown = () => {
+      moreDropdown.classList.remove("active");
+      moreOverlay.classList.remove("active");
+    };
+
+    if (moreToggle) moreToggle.addEventListener("click", openMoreDropdown);
+    if (moreClose) moreClose.addEventListener("click", closeMoreDropdown);
+    if (moreOverlay) moreOverlay.addEventListener("click", closeMoreDropdown);
+
+    // Handle clicks on More dropdown items
+    if (moreDropdown) {
+      moreDropdown.querySelectorAll(".nav-more-item").forEach(item => {
+        item.addEventListener("click", () => {
+          const view = item.dataset.view;
+          if (view) {
+            this.switchView(view);
+            closeMoreDropdown();
+            // On mobile, when a "More" view is active, highlight the More button itself
+            const moreBtn = document.getElementById("nav-more-toggle");
+            if (moreBtn) {
+              // Remove active from all visible nav items first (already done in switchView)
+              moreBtn.classList.add("active");
+            }
+          }
+        });
+      });
+    }
+
+
+    // Discontinue modal handlers
+    document.getElementById('discontinue-confirm-btn').addEventListener('click', () => this.handleDiscontinueStudent());
+    document.getElementById('discontinue-cancel-btn').addEventListener('click', () => {
+      document.getElementById('discontinue-modal').style.display = 'none';
+    });
+
+    // Discontinued detail close
+    document.getElementById('disc-detail-close-btn').addEventListener('click', () => {
+      document.getElementById('discontinued-detail-panel').style.display = 'none';
+    });
+
+    // Follow-up tab switching
+    document.querySelectorAll('.followup-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.followup-tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.followup-tab-content').forEach(c => c.style.display = 'none');
+        btn.classList.add('active');
+        const tab = btn.dataset.tab;
+        if (tab === 'active') document.getElementById('followup-active-container').style.display = 'block';
+        else if (tab === 'logs') document.getElementById('followup-logs-container').style.display = 'block';
+        else if (tab === 'paid') document.getElementById('followup-paid-container').style.display = 'block';
+      });
+    });
+
+    // Follow-up refresh
+    document.getElementById('followup-refresh-btn').addEventListener('click', () => this.loadFeeFollowups());
+
+    // Follow-up start
+    document.getElementById('followup-start-btn').addEventListener('click', () => this.handleStartFollowups());
+
+    // Follow-up stage modal
+    document.getElementById('followup-stage-form').addEventListener('submit', (e) => this.handleFollowupStageSend(e));
+    document.getElementById('followup-stage-cancel').addEventListener('click', () => {
+      document.getElementById('followup-stage-modal').style.display = 'none';
+    });
+    document.getElementById('followup-stage-modal-close').addEventListener('click', () => {
+      document.getElementById('followup-stage-modal').style.display = 'none';
+    });
 
     // Login Screen Handlers
     document.getElementById("login-form").addEventListener("submit", async (e) => {
@@ -2605,6 +2825,9 @@ class AppController {
     const feeFilter = document.getElementById("payment-fee-filter");
     if (feeFilter) feeFilter.addEventListener("change", () => this.loadPaymentsList());
 
+    const viewSheetsBtn = document.getElementById("view-fees-in-sheets-btn");
+    if (viewSheetsBtn) viewSheetsBtn.addEventListener("click", () => this.openFeesInGoogleSheets());
+
     const selectFilterBtn = document.getElementById("fee-reminder-select-filter-btn");
     if (selectFilterBtn) selectFilterBtn.addEventListener("click", () => {
       this.feeReminderSelection = this.feeReminderSelection || new Set();
@@ -2623,6 +2846,45 @@ class AppController {
 
     // Notification / Broadcast Handlers
     document.getElementById("send-absentees-sms-btn").addEventListener("click", () => this.handleSendAbsenteesSMS());
+
+    // Exam Notification Handlers
+    const examDateIds = ['exam-date-physics', 'exam-date-chemistry', 'exam-date-maths', 'exam-date-biocs'];
+    examDateIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', () => this.updateExamPreview());
+    });
+    const examTypeSelect = document.getElementById('exam-type-select');
+    if (examTypeSelect) examTypeSelect.addEventListener('change', () => this.updateExamPreview());
+    const examSelectAllBtn = document.getElementById('exam-select-all-btn');
+    if (examSelectAllBtn) examSelectAllBtn.addEventListener('click', () => {
+      this.examStudentSelection = this.examStudentSelection || new Set();
+      (this.examStudentsList || []).forEach(s => this.examStudentSelection.add(s.id));
+      this.renderExamStudentList();
+    });
+    const examDeselectAllBtn = document.getElementById('exam-deselect-all-btn');
+    if (examDeselectAllBtn) examDeselectAllBtn.addEventListener('click', () => {
+      this.examStudentSelection = new Set();
+      this.renderExamStudentList();
+    });
+    const examSendBtn = document.getElementById('exam-send-btn');
+    if (examSendBtn) examSendBtn.addEventListener('click', () => this.sendExamNotifications());
+    const examCopyBtn = document.getElementById('exam-copy-preview-btn');
+    if (examCopyBtn) examCopyBtn.addEventListener('click', () => {
+      const preview = document.getElementById('exam-message-preview');
+      if (preview) {
+        navigator.clipboard.writeText(preview.textContent).then(() => this.showToast('Message copied to clipboard!'));
+      }
+    });
+    const examOpenWaBtn = document.getElementById('exam-open-whatsapp-btn');
+    if (examOpenWaBtn) examOpenWaBtn.addEventListener('click', () => {
+      const preview = document.getElementById('exam-message-preview');
+      if (preview) {
+        const encoded = encodeURIComponent(preview.textContent);
+        window.open(`https://wa.me/?text=${encoded}`, '_blank');
+      }
+    });
+    const examLogRefreshBtn = document.getElementById('exam-log-refresh-btn');
+    if (examLogRefreshBtn) examLogRefreshBtn.addEventListener('click', () => this.loadExamNotificationLog());
 
     // Resource Management Handlers
     const openUploadResBtn = document.getElementById("open-upload-resource-modal-btn");
@@ -3220,6 +3482,627 @@ class AppController {
       lucide.createIcons();
     } catch (error) {
       container.innerHTML = `<p style="text-align:center; color:var(--danger, #ef4444); padding:30px;">Failed to load study resources: ${this.escapeHtml(error.message)}</p>`;
+    }
+  }
+
+  /* =========================================================================
+     EXAM NOTIFICATIONS
+     ========================================================================= */
+  async loadExamNotificationView() {
+    try {
+      this.examStudentsList = await db.getStudents();
+    } catch (err) {
+      this.examStudentsList = [];
+    }
+    this.examStudentSelection = this.examStudentSelection || new Set();
+    this.renderExamStudentList();
+    this.updateExamPreview();
+    this.loadExamNotificationLog();
+  }
+
+  renderExamStudentList() {
+    const listEl = document.getElementById('exam-student-list');
+    const countEl = document.getElementById('exam-student-selection-count');
+    if (!listEl) return;
+    const selected = this.examStudentSelection = this.examStudentSelection || new Set();
+    const students = this.examStudentsList || [];
+
+    // Drop selections for students that no longer exist.
+    const validIds = new Set(students.map(s => s.id));
+    for (const id of Array.from(selected)) if (!validIds.has(id)) selected.delete(id);
+
+    listEl.innerHTML = '';
+    if (!students.length) {
+      listEl.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem; text-align:center; padding:12px;">No students in this batch.</p>';
+      if (countEl) countEl.textContent = '0 selected';
+      return;
+    }
+
+    students.forEach(student => {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:6px 8px; cursor:pointer; border-radius:6px;';
+      row.onmouseover = () => row.style.background = 'var(--bg-card-hover)';
+      row.onmouseout = () => row.style.background = 'transparent';
+      const isChecked = selected.has(student.id);
+      row.innerHTML = `
+        <input type="checkbox" class="exam-student-cb" data-id="${this.escapeHtml(student.id)}" ${isChecked ? 'checked' : ''}>
+        <span style="flex:1; font-size:.85rem;">${this.escapeHtml(student.name)} <span style="color:var(--text-muted); font-size:.72rem;">#${this.escapeHtml(String(student.number || student.id))}</span></span>
+        <span style="font-size:.72rem; color:var(--text-muted);">${this.escapeHtml(student.combination || '')}</span>`;
+      row.querySelector('.exam-student-cb').addEventListener('change', event => {
+        if (event.target.checked) selected.add(student.id);
+        else selected.delete(student.id);
+        if (countEl) countEl.textContent = `${selected.size} selected`;
+      });
+      listEl.appendChild(row);
+    });
+    if (countEl) countEl.textContent = `${selected.size} selected`;
+  }
+
+  getExamSubjectDates() {
+    const physics = document.getElementById('exam-date-physics')?.value || '';
+    const chemistry = document.getElementById('exam-date-chemistry')?.value || '';
+    const maths = document.getElementById('exam-date-maths')?.value || '';
+    const biocs = document.getElementById('exam-date-biocs')?.value || '';
+    return { physics, chemistry, maths, biocs };
+  }
+
+  formatExamDate(dateStr) {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = String(d.getFullYear()).slice(-2);
+    return `${day}/${month}/${year}`;
+  }
+
+  updateExamPreview() {
+    const preview = document.getElementById('exam-message-preview');
+    if (!preview) return;
+    const dates = this.getExamSubjectDates();
+    const examType = document.getElementById('exam-type-select')?.value || 'Mid-Term';
+    const allFilled = dates.physics && dates.chemistry && dates.maths && dates.biocs;
+
+    if (!allFilled) {
+      preview.textContent = 'Fill in all 4 exam dates above to see the message preview.';
+      return;
+    }
+
+    const msg = `Dear Parent,
+
+This is to inform you about the upcoming ${examType} Examination.
+
+📚Examination Schedule
+
+1. Physics-${this.formatExamDate(dates.physics)}
+2. Chemistry-${this.formatExamDate(dates.chemistry)}
+3. Maths-${this.formatExamDate(dates.maths)}
+4. Bio/CS-${this.formatExamDate(dates.biocs)}
+📖 Portion: As per the PU Board syllabus.
+
+Kindly take note of the above schedule and ensure that your child is well prepared for the examinations.
+
+— Galaxy Academy`;
+    preview.textContent = msg;
+  }
+
+  async sendExamNotifications() {
+    const templateName = (document.getElementById('exam-template-name-input')?.value || '').trim();
+    if (!templateName) return this.showToast('Enter a template name first.', 'danger');
+
+    const dates = this.getExamSubjectDates();
+    if (!dates.physics || !dates.chemistry || !dates.maths || !dates.biocs) {
+      return this.showToast('Please fill in all 4 exam dates.', 'danger');
+    }
+
+    const selected = Array.from(this.examStudentSelection || []);
+    if (!selected.length) return this.showToast('Select at least one student.', 'danger');
+
+    const examType = document.getElementById('exam-type-select')?.value || 'Mid-Term';
+    if (!await this.confirmAction(`Send "${examType}" exam schedule to ${selected.length} student(s) via WhatsApp template "${templateName}"?`)) return;
+
+    const btn = document.getElementById('exam-send-btn');
+    btn.disabled = true;
+    const originalLabel = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="loader" style="animation:spin 1s linear infinite; width:14px; height:14px;"></i> Sending';
+    lucide.createIcons();
+
+    try {
+      const subjects = [
+        { name: 'Physics', date: this.formatExamDate(dates.physics) },
+        { name: 'Chemistry', date: this.formatExamDate(dates.chemistry) },
+        { name: 'Maths', date: this.formatExamDate(dates.maths) },
+        { name: 'Bio/CS', date: this.formatExamDate(dates.biocs) }
+      ];
+      const preview = document.getElementById('exam-message-preview');
+      const result = await db.sendExamNotifications({
+        studentIds: selected,
+        templateName,
+        examType,
+        subjects,
+        message: preview ? preview.textContent : ''
+      });
+
+      const firstError = (result.recipients || []).find(r => !r.success)?.error;
+      const severity = result.succeeded === 0 ? 'danger' : result.failed > 0 ? 'danger' : 'success';
+      const errSuffix = firstError ? ` — first error: ${firstError}` : '';
+      this.showToast(`Exam notifications: ${result.succeeded}/${result.total} delivered, ${result.failed} failed${errSuffix}`, severity);
+
+      if (result.failed === 0) this.examStudentSelection = new Set();
+      this.renderExamStudentList();
+      await this.loadExamNotificationLog();
+    } catch (err) {
+      this.showToast(`Failed to send: ${err.message || 'Server error'}`, 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+      lucide.createIcons();
+    }
+  }
+
+  async loadExamNotificationLog() {
+    const container = document.getElementById('exam-notification-log-container');
+    if (!container) return;
+    const today = this.getLocalDateString();
+    try {
+      const { logs } = await db.getExamNotificationLog(today);
+      if (!logs || !logs.length) {
+        container.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem; margin:0;">No exam notifications sent today.</p>';
+        return;
+      }
+      container.innerHTML = logs.map(log => {
+        const time = new Date(log.sentAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const succeeded = Number(log.succeeded || 0);
+        const total = Number(log.total || 0);
+        let icon = '✅';
+        if (succeeded === 0) icon = '❌';
+        else if (succeeded < total) icon = '⚠️';
+
+        const names = (log.recipients || []).map(r =>
+          `<li style="font-size:.75rem; ${r.success ? '' : 'color:var(--danger);'}">
+             ${r.success ? '✓' : '✕'} ${this.escapeHtml(r.studentName || r.studentId)}${r.success ? '' : ` — ${this.escapeHtml(r.error || 'failed')}`}
+           </li>`).join('');
+
+        const errorReasons = Array.from(new Set((log.recipients || [])
+          .filter(r => !r.success && r.error)
+          .map(r => r.error)));
+        const errorsHtml = errorReasons.length
+          ? `<div style="margin-top:8px; padding:8px; border-left:3px solid var(--danger); background:rgba(239,68,68,.08); font-size:.72rem; color:var(--danger);">
+               <strong>Errors:</strong>
+               <ul style="margin:4px 0 0 16px; padding:0;">${errorReasons.map(e => `<li>${this.escapeHtml(e)}</li>`).join('')}</ul>
+             </div>` : '';
+
+        const subjectsStr = (log.subjects || []).map(s => `${s.name}: ${s.date}`).join(' · ');
+
+        return `
+          <div style="border-top:1px solid var(--border-color); padding:8px 0;">
+            <div style="display:flex; justify-content:space-between; gap:8px; font-size:.8rem;">
+              <strong>${icon} ${this.escapeHtml(log.examType || 'Exam')} — ${this.escapeHtml(log.templateName)}</strong>
+              <span style="color:var(--text-muted);">${time} · ${succeeded}/${total} delivered</span>
+            </div>
+            <div style="font-size:.72rem; color:var(--text-muted); margin-top:4px;">${this.escapeHtml(subjectsStr)}</div>
+            <ul style="margin:6px 0 0 16px; padding:0;">${names}</ul>
+            ${errorsHtml}
+          </div>`;
+      }).join('');
+    } catch (err) {
+      container.innerHTML = `<p style="color:var(--danger); font-size:.8rem;">Failed to load log: ${this.escapeHtml(err.message || '')}</p>`;
+    }
+  }
+
+  /* =========================================================================
+     DISCONTINUED STUDENTS
+     ========================================================================= */
+  openDiscontinueModal(studentId, studentName) {
+    const modal = document.getElementById('discontinue-modal');
+    document.getElementById('discontinue-student-id').value = studentId;
+    document.getElementById('discontinue-modal-desc').textContent = `Are you sure you want to discontinue ${studentName}? They will be hidden from all active views but their data will be preserved.`;
+    document.getElementById('discontinue-reason').value = '';
+    modal.style.display = 'flex';
+    lucide.createIcons();
+  }
+
+  async handleDiscontinueStudent() {
+    const studentId = document.getElementById('discontinue-student-id').value;
+    const reason = document.getElementById('discontinue-reason').value.trim();
+    try {
+      await db.discontinueStudent(studentId, reason);
+      document.getElementById('discontinue-modal').style.display = 'none';
+      this.showToast('Student discontinued successfully.');
+      this.loadStudentsList();
+      this.refreshViewData(this.currentView);
+    } catch (error) {
+      this.showToast(error.message || 'Failed to discontinue student.', 'danger');
+    }
+  }
+
+  async loadDiscontinuedStudents() {
+    const container = document.getElementById('discontinued-list-container');
+    const summaryContainer = document.getElementById('discontinued-summary');
+    const detailPanel = document.getElementById('discontinued-detail-panel');
+    detailPanel.style.display = 'none';
+    try {
+      const students = await db.getDiscontinuedStudents();
+      const totalOutstanding = students.reduce((sum, s) => sum + (s.payment?.balance || 0), 0);
+
+      summaryContainer.innerHTML = `
+        <div class="stat-card"><div class="stat-num" style="color:var(--danger);">${students.length}</div><div class="stat-label">Discontinued</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#f59e0b;">₹${totalOutstanding.toLocaleString('en-IN')}</div><div class="stat-label">Outstanding</div></div>
+      `;
+
+      if (students.length === 0) {
+        container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:30px;">No discontinued students.</p>';
+        return;
+      }
+
+      container.innerHTML = students.map(s => {
+        const dateStr = s.discontinuedAt ? new Date(s.discontinuedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A';
+        return `
+          <div class="list-item" style="cursor:pointer; padding:12px 16px;" data-disc-id="${this.escapeHtml(s.id)}">
+            <div style="flex:1;">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span class="student-name">${this.escapeHtml(s.name)}</span>
+                <span class="badge" style="font-size:.7rem; background:rgba(239,68,68,.15); color:var(--danger); padding:2px 6px; border-radius:4px;">Discontinued</span>
+              </div>
+              <div style="font-size:.75rem; color:var(--text-muted); margin-top:4px;">📅 ${dateStr}${s.discontinueReason ? ` · ${this.escapeHtml(s.discontinueReason)}` : ''}</div>
+              <div style="font-size:.75rem; color:var(--text-muted); margin-top:2px;">💰 Fee: ₹${(s.payment?.totalFee || 0).toLocaleString('en-IN')} · Paid: ₹${(s.payment?.paid || 0).toLocaleString('en-IN')} · Balance: ₹${(s.payment?.balance || 0).toLocaleString('en-IN')}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      container.querySelectorAll('[data-disc-id]').forEach(el => {
+        el.addEventListener('click', () => {
+          const sid = el.dataset.discId;
+          const student = students.find(s => s.id === sid);
+          if (student) this.showDiscontinuedDetail(student);
+        });
+      });
+    } catch (error) {
+      container.innerHTML = `<p style="text-align:center; color:var(--danger); padding:30px;">${this.escapeHtml(error.message || 'Failed to load.')}</p>`;
+    }
+    lucide.createIcons();
+  }
+
+  showDiscontinuedDetail(student) {
+    const panel = document.getElementById('discontinued-detail-panel');
+    panel.style.display = 'block';
+    document.getElementById('disc-detail-name').textContent = student.name;
+    document.getElementById('disc-detail-reason').textContent = student.discontinueReason ? `Reason: ${student.discontinueReason}` : 'No reason given';
+    document.getElementById('disc-detail-date').textContent = student.discontinuedAt ? `Discontinued: ${new Date(student.discontinuedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}` : '';
+
+    // Payment tab
+    const payDiv = document.getElementById('disc-detail-payment');
+    const pay = student.payment || {};
+    const txns = pay.transactions || [];
+    payDiv.innerHTML = `
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;">
+        <div style="text-align:center; padding:8px; background:var(--bg-secondary); border-radius:8px;"><div style="font-size:1.1rem; font-weight:700;">₹${(pay.totalFee || 0).toLocaleString('en-IN')}</div><div style="font-size:.7rem; color:var(--text-muted);">Total Fee</div></div>
+        <div style="text-align:center; padding:8px; background:var(--bg-secondary); border-radius:8px;"><div style="font-size:1.1rem; font-weight:700; color:var(--success);">₹${(pay.paid || 0).toLocaleString('en-IN')}</div><div style="font-size:.7rem; color:var(--text-muted);">Paid</div></div>
+        <div style="text-align:center; padding:8px; background:var(--bg-secondary); border-radius:8px;"><div style="font-size:1.1rem; font-weight:700; color:var(--danger);">₹${(pay.balance || 0).toLocaleString('en-IN')}</div><div style="font-size:.7rem; color:var(--text-muted);">Balance</div></div>
+      </div>
+      ${txns.length ? `<div style="font-size:.82rem; font-weight:600; margin-bottom:6px;">Transaction History</div>
+        ${txns.map((t, i) => `<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border-color); font-size:.8rem;">
+          <span>${i + 1}. ${t.date || 'N/A'}${t.note ? ` — ${this.escapeHtml(t.note)}` : ''}</span>
+          <span style="font-weight:600;">₹${(Number(t.amount) || 0).toLocaleString('en-IN')}</span>
+        </div>`).join('')}` : '<p style="color:var(--text-muted); font-size:.8rem;">No transactions recorded.</p>'}
+    `;
+
+    // Attendance tab
+    const attDiv = document.getElementById('disc-detail-attendance');
+    const att = student.attendance || [];
+    if (att.length) {
+      const present = att.filter(a => a.status === 'P').length;
+      const pct = att.length > 0 ? ((present / att.length) * 100).toFixed(1) : 0;
+      attDiv.innerHTML = `
+        <div style="margin-bottom:10px; font-size:.85rem;">Attendance: <strong>${present}/${att.length}</strong> (${pct}%)</div>
+        <div style="max-height:200px; overflow-y:auto; font-size:.78rem;">
+          ${att.sort((a, b) => a.date.localeCompare(b.date)).map(a => `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border-color);">
+            <span>${a.date}</span><span style="color:${a.status === 'P' ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">${a.status}</span>
+          </div>`).join('')}
+        </div>
+      `;
+    } else {
+      attDiv.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem;">No attendance records.</p>';
+    }
+
+    // Marks tab
+    const marksDiv = document.getElementById('disc-detail-marks');
+    const marks = student.testMarks || [];
+    if (marks.length) {
+      marksDiv.innerHTML = `
+        <div style="max-height:200px; overflow-y:auto; font-size:.78rem;">
+          ${marks.map(m => `<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border-color);">
+            <span>${this.escapeHtml(m.testKey || '')} — ${this.escapeHtml(m.subject || '')}</span>
+            <span style="font-weight:600;">${m.totalMarks || m.marks || 'N/A'}</span>
+          </div>`).join('')}
+        </div>
+      `;
+    } else {
+      marksDiv.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem;">No test marks recorded.</p>';
+    }
+
+    // Wire reactivate button
+    const reactBtn = document.getElementById('disc-reactivate-btn');
+    const newBtn = reactBtn.cloneNode(true);
+    reactBtn.parentNode.replaceChild(newBtn, reactBtn);
+    newBtn.addEventListener('click', async () => {
+      if (await this.confirmAction(`Re-activate ${student.name}? They will return to all active views.`)) {
+        try {
+          await db.reactivateStudent(student.id);
+          this.showToast(`${student.name} has been reactivated.`);
+          this.loadDiscontinuedStudents();
+        } catch (err) {
+          this.showToast(err.message || 'Reactivation failed.', 'danger');
+        }
+      }
+    });
+
+    // Wire tab switching
+    panel.querySelectorAll('.disc-detail-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        panel.querySelectorAll('.disc-detail-tab').forEach(b => b.classList.remove('active'));
+        panel.querySelectorAll('.disc-detail-content').forEach(c => c.style.display = 'none');
+        btn.classList.add('active');
+        document.getElementById(`disc-detail-${btn.dataset.tab}`).style.display = 'block';
+      });
+    });
+
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    lucide.createIcons();
+  }
+
+  /* =========================================================================
+     FEE FOLLOW-UP PIPELINE
+     ========================================================================= */
+  async loadFeeFollowups() {
+    try {
+      const allFollowups = await db.getFeeFollowups('all');
+      const active = allFollowups.filter(f => f.status === 'active');
+      const paid = allFollowups.filter(f => f.status === 'paid');
+      const exhausted = allFollowups.filter(f => f.status === 'exhausted');
+      const allLogs = [];
+      allFollowups.forEach(f => {
+        (f.logs || []).forEach(log => {
+          allLogs.push({ ...log, studentName: f.studentName, studentId: f.studentId || f.id });
+        });
+      });
+      allLogs.sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
+
+      this.renderActiveFollowups(active);
+      this.renderFollowupLogs(allLogs);
+      this.renderPaidFollowups(paid);
+    } catch (err) {
+      document.getElementById('followup-active-list').innerHTML = `<p style="color:var(--danger); font-size:.8rem;">${this.escapeHtml(err.message || 'Failed to load.')}</p>`;
+    }
+    lucide.createIcons();
+  }
+
+  renderActiveFollowups(active) {
+    const container = document.getElementById('followup-active-list');
+    if (active.length === 0) {
+      container.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem; margin:0;">No active follow-ups.</p>';
+      return;
+    }
+
+    const STAGE_NAMES = { 1: 'Group WhatsApp', 2: 'Personal WhatsApp', 3: 'Phone Call', 4: 'Face-to-Face' };
+    const STAGE_COLORS = { 1: '#22c55e', 2: '#3b82f6', 3: '#f59e0b', 4: '#ef4444' };
+
+    container.innerHTML = active.map(f => {
+      const stage = f.currentStage || 1;
+      const stageName = STAGE_NAMES[stage] || `Stage ${stage}`;
+      const stageColor = STAGE_COLORS[stage] || 'var(--primary)';
+      let suggestedHtml = '';
+      if (f.suggestedNextDate) {
+        const sugDate = new Date(f.suggestedNextDate);
+        const now = Date.now();
+        const diffDays = Math.ceil((f.suggestedNextDate - now) / 86400000);
+        let dateColor = '#22c55e';
+        if (diffDays <= 0) dateColor = '#ef4444';
+        else if (diffDays <= 1) dateColor = '#f59e0b';
+        suggestedHtml = `<div style="font-size:.72rem; color:${dateColor}; margin-top:4px;">📅 Suggested: ${sugDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}${diffDays <= 0 ? ' (overdue!)' : diffDays <= 1 ? ' (today)' : ''}</div>`;
+      }
+      return `
+        <div class="card" style="padding:12px; margin-bottom:8px; border-left:4px solid ${stageColor};">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:180px;">
+              <div style="font-weight:600;">${this.escapeHtml(f.studentName || f.id)}</div>
+              <div style="font-size:.75rem; color:var(--text-muted); margin-top:2px;">📱 ${this.escapeHtml(f.phone || 'N/A')} · Balance: ₹${(f.balance || 0).toLocaleString('en-IN')}</div>
+              <div style="margin-top:6px;"><span style="display:inline-block; padding:2px 8px; font-size:.72rem; font-weight:700; border-radius:10px; color:white; background:${stageColor};">Stage ${stage} — ${stageName}</span></div>
+              <div style="margin-top:4px; padding:6px 10px; background:rgba(139,92,246,.08); border-radius:6px; font-size:.78rem; color:var(--primary-hover);">⏳ Next: Stage ${Math.min(stage, 4)} — ${stageName}</div>
+              ${suggestedHtml}
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+              <button class="btn btn-primary followup-send-btn" data-student-id="${this.escapeHtml(f.studentId || f.id)}" data-stage="${stage}" data-student-name="${this.escapeHtml(f.studentName || '')}" style="padding:5px 12px; font-size:.75rem;">
+                <i data-lucide="send" style="width:12px; height:12px;"></i> Send Stage ${stage}
+              </button>
+              <button class="btn btn-secondary followup-mark-paid-btn" data-student-id="${this.escapeHtml(f.studentId || f.id)}" style="padding:5px 12px; font-size:.75rem; border-color:var(--success); color:var(--success);">
+                ✅ Mark Paid
+              </button>
+              <button class="btn btn-secondary followup-cancel-btn" data-student-id="${this.escapeHtml(f.studentId || f.id)}" style="padding:5px 12px; font-size:.75rem;">
+                ✕ Cancel
+              </button>
+            </div>
+          </div>
+          ${(f.logs || []).length ? `<details style="margin-top:8px;"><summary style="font-size:.75rem; color:var(--text-muted); cursor:pointer;">View Logs (${f.logs.length})</summary>
+            <div style="margin-top:6px; font-size:.72rem;">${f.logs.map(l => {
+              const time = new Date(l.sentAt).toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', hour12:true });
+              return `<div style="padding:3px 0; border-bottom:1px solid var(--border-color);">${time} · Stage ${l.stage || '?'} · ${l.action || '?'}${l.note ? ` — ${this.escapeHtml(l.note)}` : ''}</div>`;
+            }).join('')}</div>
+          </details>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    // Wire send buttons
+    container.querySelectorAll('.followup-send-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.openFollowupStageModal(btn.dataset.studentId, Number(btn.dataset.stage), btn.dataset.studentName);
+      });
+    });
+
+    // Wire mark paid buttons
+    container.querySelectorAll('.followup-mark-paid-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (await this.confirmAction('Mark this student as paid?')) {
+          try {
+            await db.markFollowupPaid(btn.dataset.studentId);
+            this.showToast('Marked as paid.');
+            this.loadFeeFollowups();
+          } catch (err) { this.showToast(err.message || 'Failed.', 'danger'); }
+        }
+      });
+    });
+
+    // Wire cancel buttons
+    container.querySelectorAll('.followup-cancel-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (await this.confirmAction('Cancel this follow-up?')) {
+          try {
+            await db.cancelFeeFollowup(btn.dataset.studentId);
+            this.showToast('Follow-up cancelled.');
+            this.loadFeeFollowups();
+          } catch (err) { this.showToast(err.message || 'Failed.', 'danger'); }
+        }
+      });
+    });
+  }
+
+  renderFollowupLogs(allLogs) {
+    const container = document.getElementById('followup-logs-list');
+    if (allLogs.length === 0) {
+      container.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem; margin:0;">No follow-up messages sent yet.</p>';
+      return;
+    }
+
+    const ACTION_LABELS = { whatsapp_template: '📱 WhatsApp Template', whatsapp_personal: '💬 Personal WhatsApp', phone_call: '📞 Phone Call', face_to_face: '🤝 Face-to-Face', marked_paid: '✅ Marked Paid', auto_marked_paid: '✅ Auto Paid' };
+
+    container.innerHTML = `
+      <div style="max-height:400px; overflow-y:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:.78rem;">
+          <thead><tr style="background:var(--bg-secondary); position:sticky; top:0;">
+            <th style="padding:6px 8px; text-align:left;">Date/Time</th>
+            <th style="padding:6px 8px; text-align:left;">Student</th>
+            <th style="padding:6px 8px; text-align:left;">Stage</th>
+            <th style="padding:6px 8px; text-align:left;">Action</th>
+            <th style="padding:6px 8px; text-align:left;">Note</th>
+          </tr></thead>
+          <tbody>
+            ${allLogs.slice(0, 100).map(l => {
+              const time = l.sentAt ? new Date(l.sentAt).toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', hour12:true }) : 'N/A';
+              return `<tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:6px 8px; white-space:nowrap;">${time}</td>
+                <td style="padding:6px 8px;">${this.escapeHtml(l.studentName || l.studentId || '')}</td>
+                <td style="padding:6px 8px;">${l.stage || '—'}</td>
+                <td style="padding:6px 8px;">${ACTION_LABELS[l.action] || l.action || '—'}</td>
+                <td style="padding:6px 8px; color:var(--text-muted);">${this.escapeHtml(l.note || '')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  renderPaidFollowups(paid) {
+    const container = document.getElementById('followup-paid-list');
+    const summaryContainer = document.getElementById('followup-paid-summary');
+
+    if (paid.length === 0) {
+      container.innerHTML = '<p style="color:var(--text-muted); font-size:.8rem; margin:0;">No students have paid through follow-ups yet.</p>';
+      summaryContainer.innerHTML = '';
+      return;
+    }
+
+    const totalCollected = paid.reduce((sum, f) => sum + (f.paid || 0), 0);
+    summaryContainer.innerHTML = `
+      <div class="stat-card"><div class="stat-num" style="color:var(--success);">${paid.length}</div><div class="stat-label">Recovered</div></div>
+      <div class="stat-card"><div class="stat-num" style="color:var(--success);">₹${totalCollected.toLocaleString('en-IN')}</div><div class="stat-label">Collected</div></div>
+    `;
+
+    container.innerHTML = paid.map(f => {
+      const lastPaidLog = (f.logs || []).filter(l => l.action === 'marked_paid' || l.action === 'auto_marked_paid').pop();
+      const paidDate = lastPaidLog ? new Date(lastPaidLog.sentAt).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }) : 'N/A';
+      return `
+        <div class="list-item" style="padding:10px 16px;">
+          <div style="flex:1;">
+            <div style="font-weight:600;">${this.escapeHtml(f.studentName || f.id)} <span style="font-size:.72rem; color:var(--success); font-weight:700;">✅ PAID</span></div>
+            <div style="font-size:.75rem; color:var(--text-muted); margin-top:2px;">Paid: ₹${(f.paid || 0).toLocaleString('en-IN')} · Stage at payment: ${f.currentStage || '?'} · Date: ${paidDate}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  openFollowupStageModal(studentId, stage, studentName) {
+    const modal = document.getElementById('followup-stage-modal');
+    const STAGE_NAMES = { 1: 'Group WhatsApp Reminder', 2: 'Personal WhatsApp', 3: 'Direct Phone Call', 4: 'Face-to-Face Meeting' };
+    const DEFAULT_ACTIONS = { 1: 'whatsapp_template', 2: 'whatsapp_personal', 3: 'phone_call', 4: 'face_to_face' };
+
+    document.getElementById('followup-stage-student-id').value = studentId;
+    document.getElementById('followup-stage-number').value = stage;
+    document.getElementById('followup-stage-student-name').value = studentName;
+    document.getElementById('followup-stage-modal-title').textContent = `Stage ${stage} — ${STAGE_NAMES[stage] || 'Follow-Up'}`;
+    document.getElementById('followup-stage-modal-desc').textContent = `Send stage ${stage} follow-up for ${studentName}.`;
+    document.getElementById('followup-stage-action').value = DEFAULT_ACTIONS[stage] || 'whatsapp_template';
+    document.getElementById('followup-stage-note').value = '';
+
+    // Show/hide template name based on action
+    const actionSelect = document.getElementById('followup-stage-action');
+    const tplGroup = document.getElementById('followup-stage-template-group');
+    const submitLabel = document.getElementById('followup-stage-submit-label');
+    const updateVisibility = () => {
+      const isWA = actionSelect.value.startsWith('whatsapp');
+      tplGroup.style.display = isWA ? 'block' : 'none';
+      submitLabel.textContent = isWA ? 'Send Now' : 'Log It';
+    };
+    updateVisibility();
+    actionSelect.onchange = updateVisibility;
+
+    modal.style.display = 'flex';
+    lucide.createIcons();
+  }
+
+  async handleFollowupStageSend(e) {
+    e.preventDefault();
+    const studentId = document.getElementById('followup-stage-student-id').value;
+    const stage = Number(document.getElementById('followup-stage-number').value);
+    const action = document.getElementById('followup-stage-action').value;
+    const templateName = document.getElementById('followup-stage-template').value;
+    const note = document.getElementById('followup-stage-note').value;
+
+    try {
+      await db.sendFollowupStage(studentId, { stage, action, templateName, note });
+      document.getElementById('followup-stage-modal').style.display = 'none';
+      const isWA = action.startsWith('whatsapp');
+      this.showToast(isWA ? 'WhatsApp message sent and logged.' : 'Action logged successfully.');
+      this.loadFeeFollowups();
+    } catch (error) {
+      this.showToast(error.message || 'Failed to send/log stage.', 'danger');
+    }
+  }
+
+  async handleStartFollowups() {
+    // Use the same fee reminder selection checkboxes
+    const checked = document.querySelectorAll('#fee-reminder-recipients-list input[type=checkbox]:checked');
+    const studentIds = Array.from(checked).map(cb => cb.dataset.id);
+    if (!studentIds.length) {
+      this.showToast('Select students in the fee reminder list above first.', 'danger');
+      return;
+    }
+    if (!await this.confirmAction(`Start follow-up pipeline for ${studentIds.length} student(s)?`)) return;
+    try {
+      const result = await db.startFeeFollowups(studentIds);
+      const succeeded = (result.results || []).filter(r => r.success).length;
+      const failed = (result.results || []).filter(r => !r.success);
+      let msg = `Follow-up started for ${succeeded} student(s).`;
+      if (failed.length) msg += ` ${failed.length} failed: ${failed.map(f => f.error || f.studentId).join(', ')}`;
+      this.showToast(msg, failed.length ? 'danger' : undefined);
+      this.loadFeeFollowups();
+    } catch (error) {
+      this.showToast(error.message || 'Failed to start follow-ups.', 'danger');
     }
   }
 

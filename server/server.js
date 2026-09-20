@@ -657,9 +657,12 @@ app.get('/api/admin/students', requireAdmin, async (req, res) => {
     const db = getFirestore();
     const snapshot = await db.collection('students').get();
     const bid = activeBatchId(req);
+    const includeDiscontinued = req.query.includeDiscontinued === 'true';
     const students = snapshot.docs
       .map(item => ({ id: item.id, ...item.data() }))
       .filter(item => docBelongsToActiveBatch(req, item))
+      // Hide discontinued students from all active views unless explicitly requested.
+      .filter(item => includeDiscontinued || !item.discontinued)
       // Ensure legacy students without a `number` still show a stable per-batch ordinal.
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((student, idx) => ({
@@ -752,6 +755,117 @@ app.post('/api/admin/students/:studentId/reset-password', requireSameOrigin, req
     return res.json({ message: 'Student password reset. The parent phone number is required for the next login.' });
   } catch (error) {
     return clientError(res, error);
+  }
+});
+
+// ── Discontinued students (soft-flag, no deletion) ──────────
+app.post('/api/admin/students/:studentId/discontinue', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const reason = text(req.body.reason, 'Discontinue reason', { max: 500 });
+    const db = getFirestore();
+    const snap = await db.collection('students').doc(studentId).get();
+    if (!snap.exists) return res.status(404).json({ message: 'Student not found.' });
+    if (!docBelongsToActiveBatch(req, snap.data())) {
+      return res.status(403).json({ message: 'This student belongs to a different batch.' });
+    }
+    await db.collection('students').doc(studentId).set({
+      discontinued: true,
+      discontinuedAt: Date.now(),
+      discontinueReason: reason
+    }, { merge: true });
+    await writeAudit(req, 'student.discontinued', studentId);
+    return res.json({ message: 'Student discontinued.', studentId });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.post('/api/admin/students/:studentId/reactivate', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const db = getFirestore();
+    const snap = await db.collection('students').doc(studentId).get();
+    if (!snap.exists) return res.status(404).json({ message: 'Student not found.' });
+    if (!docBelongsToActiveBatch(req, snap.data())) {
+      return res.status(403).json({ message: 'This student belongs to a different batch.' });
+    }
+    await db.collection('students').doc(studentId).set({
+      discontinued: false,
+      reactivatedAt: Date.now()
+    }, { merge: true });
+    await writeAudit(req, 'student.reactivated', studentId);
+    return res.json({ message: 'Student reactivated.', studentId });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.get('/api/admin/students/discontinued', requireAdmin, async (req, res) => {
+  try {
+    const db = getFirestore();
+    const bid = activeBatchId(req);
+    const [studentsSnap, paymentsSnap, attendanceSnap, testsSnap] = await Promise.all([
+      db.collection('students').get(),
+      db.collection('payments').get(),
+      db.collection('attendance').get(),
+      db.collection('test_marks').get()
+    ]);
+
+    // Filter to only discontinued students in this batch
+    const students = studentsSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(s => docBelongsToActiveBatch(req, s) && s.discontinued === true);
+
+    // Build payments map
+    const paymentsMap = new Map();
+    paymentsSnap.forEach(d => paymentsMap.set(d.id, d.data()));
+
+    // Build attendance records per student
+    const attendanceMap = new Map();
+    attendanceSnap.docs.forEach(d => {
+      const data = d.data();
+      if (!docBelongsToActiveBatch(req, data)) return;
+      const dateKey = stripBatchPrefix(d.id, bid);
+      Object.entries(data).forEach(([key, value]) => {
+        if (key.startsWith('__') || key === 'batchId' || key === 'updatedAt' || key === 'date') return;
+        if (!attendanceMap.has(key)) attendanceMap.set(key, []);
+        attendanceMap.get(key).push({ date: dateKey, status: value });
+      });
+    });
+
+    // Build test marks per student
+    const marksMap = new Map();
+    testsSnap.docs.forEach(d => {
+      const data = d.data();
+      if (!docBelongsToActiveBatch(req, data)) return;
+      const testKey = stripBatchPrefix(d.id, bid);
+      if (data.results) {
+        Object.entries(data.results).forEach(([studentId, marks]) => {
+          if (!marksMap.has(studentId)) marksMap.set(studentId, []);
+          marksMap.get(studentId).push({ testKey, subject: data.subject || '', ...marks });
+        });
+      }
+    });
+
+    const result = students.map(student => {
+      const pay = paymentsMap.get(student.id) || {};
+      const totalFee = Number(pay.totalFee) || 65000;
+      const transactions = Array.isArray(pay.transactions) ? pay.transactions : [];
+      const paid = transactions.reduce((sum, t) => sum + (Number(t?.amount) || 0), 0);
+      const balance = Math.max(totalFee - paid, 0);
+      return {
+        ...student,
+        batchId: student.batchId || bid,
+        payment: { totalFee, transactions, paid, balance },
+        attendance: attendanceMap.get(student.id) || [],
+        testMarks: marksMap.get(student.id) || []
+      };
+    });
+
+    return res.json({ students: result });
+  } catch (error) {
+    return firebaseError(res, error);
   }
 });
 
@@ -920,8 +1034,14 @@ app.get('/api/admin/payments', requireAdmin, async (req, res) => {
       db.collection('students').get()
     ]);
     const studentBatch = new Map();
-    studentsSnap.forEach(s => studentBatch.set(s.id, s.data().batchId || DEFAULT_BATCH.id));
+    const discontinuedIds = new Set();
+    studentsSnap.forEach(s => {
+      const data = s.data();
+      studentBatch.set(s.id, data.batchId || DEFAULT_BATCH.id);
+      if (data.discontinued === true) discontinuedIds.add(s.id);
+    });
     const bid = activeBatchId(req);
+    const includeDiscontinued = req.query.includeDiscontinued === 'true';
     const payments = {};
     paymentsSnap.forEach(item => {
       const data = item.data();
@@ -929,6 +1049,8 @@ app.get('/api/admin/payments', requireAdmin, async (req, res) => {
       // matches, or (for legacy docs) its student's batchId matches.
       const paymentBatch = data.batchId || studentBatch.get(item.id) || DEFAULT_BATCH.id;
       if (paymentBatch !== bid) return;
+      // Hide discontinued students' payments from the active fee view.
+      if (!includeDiscontinued && discontinuedIds.has(item.id)) return;
       payments[item.id] = {
         totalFee: Number(data.totalFee) || 65000,
         records: data.records || {},
@@ -999,8 +1121,29 @@ app.post('/api/admin/payments/:studentId/transactions', requireSameOrigin, requi
     const transactions = Array.isArray(existing.transactions) ? existing.transactions : [];
     if (transactions.length >= 200) throw new Error('Payment history has reached its maximum size.');
     transactions.push({ id: crypto.randomUUID(), date, amount, note, recordedAt: Date.now() });
-    await ref.set({ studentId, totalFee: Number(existing.totalFee) || 65000, transactions, updatedAt: Date.now(), batchId: activeBatchId(req) }, { merge: true });
+    const totalFee = Number(existing.totalFee) || 65000;
+    await ref.set({ studentId, totalFee, transactions, updatedAt: Date.now(), batchId: activeBatchId(req) }, { merge: true });
     await writeAudit(req, 'payment.transaction_added', studentId);
+
+    // Auto-mark any active follow-up as 'paid' when balance reaches 0.
+    const newPaid = transactions.reduce((sum, t) => sum + (Number(t?.amount) || 0), 0);
+    const newBalance = Math.max(totalFee - newPaid, 0);
+    if (newBalance === 0) {
+      try {
+        const followupSnap = await db.collection('fee_followups').doc(studentId).get();
+        if (followupSnap.exists && followupSnap.data().status === 'active') {
+          const followupData = followupSnap.data();
+          const logs = Array.isArray(followupData.logs) ? followupData.logs : [];
+          logs.push({ action: 'auto_marked_paid', sentAt: Date.now(), sentBy: 'system', note: 'Balance reached 0 after payment.' });
+          await db.collection('fee_followups').doc(studentId).set({
+            status: 'paid', paid: newPaid, balance: 0, logs, updatedAt: Date.now()
+          }, { merge: true });
+        }
+      } catch (followupErr) {
+        console.error('Auto-mark follow-up paid failed:', followupErr.message);
+      }
+    }
+
     return res.status(201).json({ transaction: transactions.at(-1), transactions });
   } catch (error) {
     return clientError(res, error);
@@ -1082,6 +1225,192 @@ app.delete('/api/admin/payments/:studentId/transactions',
     }
     await ref.set({ transactions: [], updatedAt: Date.now() }, { merge: true });
     await writeAudit(req, 'payment.transactions_cleared', studentId);
+    return res.status(204).end();
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+// ── Manual fee follow-up pipeline (no automation) ───────────
+app.post('/api/admin/fee-followups/start', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const rawIds = Array.isArray(req.body.studentIds) ? req.body.studentIds : [];
+    if (!rawIds.length) throw new Error('Select at least one student.');
+    if (rawIds.length > 200) throw new Error('Too many students in one batch.');
+    const studentIds = rawIds.map(id => documentId(id, 'Student ID'));
+    const db = getFirestore();
+    const bid = activeBatchId(req);
+
+    const [studentsSnap, paymentsSnap] = await Promise.all([
+      db.collection('students').get(),
+      db.collection('payments').get()
+    ]);
+    const studentsById = new Map();
+    studentsSnap.forEach(d => {
+      const data = { id: d.id, ...d.data() };
+      if (docBelongsToActiveBatch(req, data)) studentsById.set(d.id, data);
+    });
+    const paymentsById = new Map();
+    paymentsSnap.forEach(d => paymentsById.set(d.id, d.data() || {}));
+
+    const results = [];
+    for (const sid of studentIds) {
+      const student = studentsById.get(sid);
+      if (!student) { results.push({ studentId: sid, success: false, error: 'Student not in this batch.' }); continue; }
+
+      // Check for existing active follow-up
+      const existingSnap = await db.collection('fee_followups').doc(sid).get();
+      if (existingSnap.exists && existingSnap.data().status === 'active') {
+        results.push({ studentId: sid, studentName: student.name, success: false, error: 'Follow-up already active.' });
+        continue;
+      }
+
+      const pay = paymentsById.get(sid) || {};
+      const totalFee = Number(pay.totalFee) || 65000;
+      const received = Array.isArray(pay.transactions)
+        ? pay.transactions.reduce((sum, t) => sum + (Number(t?.amount) || 0), 0) : 0;
+      const balance = Math.max(totalFee - received, 0);
+
+      const doc = {
+        studentId: sid,
+        studentName: student.name,
+        batchId: bid,
+        phone: student.phone || student.parentPhone || '',
+        currentStage: 1,
+        status: 'active',
+        totalFee,
+        paid: received,
+        balance,
+        createdAt: Date.now(),
+        suggestedNextDate: null,
+        logs: []
+      };
+      await db.collection('fee_followups').doc(sid).set(doc);
+      results.push({ studentId: sid, studentName: student.name, success: true });
+    }
+
+    await writeAudit(req, 'fee_followup.started', `${results.filter(r => r.success).length} students`);
+    return res.json({ results });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.post('/api/admin/fee-followups/:studentId/send', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const stage = Number(req.body.stage);
+    if (!Number.isInteger(stage) || stage < 1 || stage > 4) throw new Error('Stage must be 1–4.');
+    const action = text(req.body.action, 'Action', { required: true, max: 30 });
+    if (!['whatsapp_template', 'whatsapp_personal', 'phone_call', 'face_to_face'].includes(action)) {
+      throw new Error('Action must be whatsapp_template, whatsapp_personal, phone_call, or face_to_face.');
+    }
+    const templateName = text(req.body.templateName, 'Template name', { max: 100 });
+    const note = text(req.body.note, 'Note', { max: 1000 });
+    const db = getFirestore();
+
+    const followupSnap = await db.collection('fee_followups').doc(studentId).get();
+    if (!followupSnap.exists) return res.status(404).json({ message: 'No follow-up found for this student.' });
+    const followup = followupSnap.data();
+    if (followup.status !== 'active') return res.status(400).json({ message: 'Follow-up is not active.' });
+
+    const logEntry = {
+      stage,
+      action,
+      templateName: templateName || '',
+      sentAt: Date.now(),
+      sentBy: 'admin',
+      messageId: null,
+      note: note || ''
+    };
+
+    // For WhatsApp actions, actually send the message
+    if (action === 'whatsapp_template' || action === 'whatsapp_personal') {
+      const phone = followup.phone;
+      if (!phone) return res.status(400).json({ message: 'No phone number on file for this student.' });
+      const tplName = templateName || 'fee_reminder';
+      const templateLanguage = text(req.body.templateLanguage, 'Template language', { max: 10 }) || 'en';
+      const result = await notificationService.sendTemplate({
+        to: phone,
+        templateName: tplName,
+        params: [followup.studentName, String(followup.totalFee), String(followup.paid), String(followup.balance)],
+        language: templateLanguage
+      });
+      logEntry.messageId = result.messageId || null;
+      logEntry.templateName = tplName;
+      if (!result.success) {
+        return res.status(502).json({ message: result.error || 'WhatsApp send failed.', logEntry });
+      }
+    }
+
+    const logs = Array.isArray(followup.logs) ? followup.logs : [];
+    logs.push(logEntry);
+
+    // Compute suggested next date based on escalation intervals
+    const STAGE_INTERVALS = { 1: 3, 2: 4, 3: 5 }; // days until next stage
+    const nextStage = stage + 1;
+    const suggestedNextDate = stage < 4
+      ? Date.now() + (STAGE_INTERVALS[stage] || 3) * 86400000
+      : null;
+
+    const update = {
+      currentStage: nextStage > 4 ? 4 : nextStage,
+      suggestedNextDate,
+      logs,
+      updatedAt: Date.now()
+    };
+    if (stage >= 4) update.status = 'exhausted';
+    await db.collection('fee_followups').doc(studentId).set(update, { merge: true });
+    await writeAudit(req, 'fee_followup.stage_sent', `${studentId}#stage${stage}`);
+    return res.json({ logEntry, followup: { ...followup, ...update } });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.get('/api/admin/fee-followups', requireAdmin, async (req, res) => {
+  try {
+    const db = getFirestore();
+    const statusFilter = text(req.query.status, 'Status filter', { max: 20 }) || 'all';
+    const snap = await db.collection('fee_followups').get();
+    let followups = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(d => docBelongsToActiveBatch(req, d));
+    if (statusFilter !== 'all') {
+      followups = followups.filter(d => d.status === statusFilter);
+    }
+    followups.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return res.json({ followups });
+  } catch (error) {
+    return firebaseError(res, error);
+  }
+});
+
+app.post('/api/admin/fee-followups/:studentId/mark-paid', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const db = getFirestore();
+    const snap = await db.collection('fee_followups').doc(studentId).get();
+    if (!snap.exists) return res.status(404).json({ message: 'No follow-up found.' });
+    const data = snap.data();
+    const logs = Array.isArray(data.logs) ? data.logs : [];
+    logs.push({ action: 'marked_paid', sentAt: Date.now(), sentBy: 'admin', note: 'Manually marked as paid.' });
+    await db.collection('fee_followups').doc(studentId).set({
+      status: 'paid', logs, updatedAt: Date.now()
+    }, { merge: true });
+    await writeAudit(req, 'fee_followup.marked_paid', studentId);
+    return res.json({ message: 'Follow-up marked as paid.', studentId });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.delete('/api/admin/fee-followups/:studentId', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const studentId = documentId(req.params.studentId, 'Student ID');
+    const db = getFirestore();
+    await db.collection('fee_followups').doc(studentId).delete();
+    await writeAudit(req, 'fee_followup.cancelled', studentId);
     return res.status(204).end();
   } catch (error) {
     return clientError(res, error);
@@ -1200,6 +1529,94 @@ app.get('/api/admin/attendance-reminders', requireAdmin, async (req, res) => {
     const date = dateValue(req.query.date);
     const db = getFirestore();
     const snap = await db.collection('attendance_reminders').get();
+    const logs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(d => docBelongsToActiveBatch(req, d) && d.date === date)
+      .sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
+    return res.json({ logs });
+  } catch (error) {
+    return firebaseError(res, error);
+  }
+});
+
+// ── Exam schedule notifications (Mid-Term / Final etc.) ──────────────
+app.post('/api/admin/exam-notifications', requireSameOrigin, requireAdmin, async (req, res) => {
+  try {
+    const templateName = text(req.body.templateName, 'Template name', { required: true, max: 100 });
+    const templateLanguage = text(req.body.templateLanguage, 'Template language', { max: 10 }) || 'en';
+    const examType = text(req.body.examType, 'Exam type', { max: 60 }) || 'Mid-Term';
+    const message = text(req.body.message, 'Message text', { max: 4000 }) || '';
+
+    // The 4 subject dates that map to template {{1}}–{{4}}.
+    const subjects = Array.isArray(req.body.subjects) ? req.body.subjects : [];
+    if (subjects.length !== 4) throw new Error('Exactly 4 subject dates are required.');
+    const subjectDates = subjects.map((s, i) => text(s.date, `Subject ${i + 1} date`, { required: true, max: 30 }));
+
+    const rawIds = Array.isArray(req.body.studentIds) ? req.body.studentIds : [];
+    if (!rawIds.length) throw new Error('Select at least one student to notify.');
+    if (rawIds.length > 200) throw new Error('Too many recipients in one send.');
+    const studentIds = rawIds.map(id => documentId(id, 'Student ID'));
+
+    const db = getFirestore();
+    const bid = activeBatchId(req);
+
+    const studentsSnap = await db.collection('students').get();
+    const studentsById = new Map();
+    studentsSnap.forEach(d => {
+      const data = { id: d.id, ...d.data() };
+      if (docBelongsToActiveBatch(req, data)) studentsById.set(d.id, data);
+    });
+
+    const results = [];
+    for (const sid of studentIds) {
+      const student = studentsById.get(sid);
+      if (!student) {
+        results.push({ studentId: sid, success: false, error: 'Student not in this batch.' });
+        continue;
+      }
+      const phone = student.phone || student.parentPhone;
+      if (!phone) {
+        results.push({ studentId: sid, studentName: student.name, success: false, error: 'No parent phone on file.' });
+        continue;
+      }
+      const result = await notificationService.sendTemplate({
+        to: phone,
+        templateName,
+        params: subjectDates,   // {{1}} Physics date, {{2}} Chemistry date, {{3}} Maths date, {{4}} Bio/CS date
+        language: templateLanguage
+      });
+      results.push({
+        studentId: sid, studentName: student.name, phone,
+        success: !!result.success, error: result.error || null, messageId: result.messageId || null
+      });
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const logId = `${bid}__exam__${today}__${Date.now()}`;
+    const logDoc = {
+      batchId: bid, date: today, templateName, templateLanguage, examType, message,
+      subjects: subjects.map((s, i) => ({ name: s.name || `Subject ${i + 1}`, date: subjectDates[i] })),
+      sentAt: Date.now(),
+      sentBy: req.user && req.user.role === 'admin' ? 'admin' : 'system',
+      total: results.length,
+      succeeded: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      recipients: results
+    };
+    await db.collection('exam_notifications').doc(logId).set(logDoc);
+    await writeAudit(req, 'exam_notifications.sent', `${examType}#${templateName}#${results.length}`);
+    return res.json({ ...logDoc, id: logId });
+  } catch (error) {
+    return clientError(res, error);
+  }
+});
+
+app.get('/api/admin/exam-notifications', requireAdmin, async (req, res) => {
+  try {
+    const date = dateValue(req.query.date);
+    const db = getFirestore();
+    const snap = await db.collection('exam_notifications').get();
     const logs = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .filter(d => docBelongsToActiveBatch(req, d) && d.date === date)
