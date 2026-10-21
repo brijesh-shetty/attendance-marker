@@ -142,9 +142,66 @@
     font-weight: bold !important;
   }
 
-  /* Remove cumulative detail section and signature section from printed output */
-  .print-summary,
-  .signature-area {
+  /* Multi-page break handling and outer page border */
+  .print-page {
+    page-break-after: always !important;
+    break-after: page !important;
+    box-sizing: border-box !important;
+    border: 2px solid #000000 !important;
+    padding: 10px 14px !important;
+    margin-bottom: 0 !important;
+  }
+
+  .print-page:last-child {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* Support landscape printing when print-landscape body class is set */
+  body.print-landscape {
+    @page {
+      size: A4 landscape !important;
+      margin: 0 !important;
+    }
+  }
+
+  body.print-landscape #print-sheet-root {
+    padding: 6mm 8mm !important;
+  }
+
+  /* Compact 31-day grid attendance table with equal fixed column widths */
+  .attendance-grid-table {
+    table-layout: fixed !important;
+    width: 100% !important;
+  }
+
+  .attendance-grid-table th,
+  .attendance-grid-table td {
+    padding: 2px 1px !important;
+    font-size: 8pt !important;
+    text-align: center !important;
+  }
+
+  .attendance-grid-table th {
+    font-size: 7.5pt !important;
+  }
+
+  .attendance-day-col {
+    width: 2.2% !important;
+    min-width: 18px !important;
+    max-width: 22px !important;
+  }
+
+  /* Signature column styling */
+  .sig-col {
+    width: 110px !important;
+    min-width: 95px !important;
+  }
+
+  /* Remove cumulative detail section from printed output */
+  .print-summary {
     display: none !important;
   }
 }
+
+

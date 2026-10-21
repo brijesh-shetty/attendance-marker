@@ -139,11 +139,16 @@
 
       <!-- 2. STUDENTS VIEW -->
       <section id="students-view" class="view-section">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
           <h2>Student Roster & Credentials</h2>
-          <button class="btn btn-primary" id="add-student-trigger-btn">
-            <i data-lucide="user-plus"></i> Add Student
-          </button>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button class="btn btn-secondary" id="open-download-forms-modal-btn" style="display: inline-flex; align-items: center; gap: 6px;">
+              <i data-lucide="file-text" style="width: 16px; height: 16px;"></i> Download Forms & Registers
+            </button>
+            <button class="btn btn-primary" id="add-student-trigger-btn">
+              <i data-lucide="user-plus" style="width: 16px; height: 16px;"></i> Add Student
+            </button>
+          </div>
         </div>
 
         <div class="input-group">
@@ -470,6 +475,7 @@
             <div class="input-group" style="margin:0;">
               <label for="fee-reminder-template-input" style="font-size:.8rem;">Template name (must be approved on Meta)</label>
               <select id="fee-reminder-template-input" class="select-field" style="font-size:.85rem;">
+                <option value="initial_message">initial_message (Fee Due Reminder)</option>
                 <option value="fee_reminder">fee_reminder (Partial Payment)</option>
                 <option value="fee_reminder_zero">fee_reminder_zero (0% Paid)</option>
                 <option value="eve_reminder">eve_reminder (1 Day Before Deadline)</option>
@@ -482,6 +488,10 @@
             <button class="btn btn-primary" id="fee-reminder-send-btn" style="padding:11px 16px; background:#25D366; border-color:#25D366;">
               <i data-lucide="send" style="width:14px; height:14px;"></i> Send
             </button>
+          </div>
+          <div id="fee-reminder-duedate-group" class="input-group" style="margin:10px 0 0;">
+            <label for="fee-reminder-duedate-input" style="font-size:.8rem;">Due date (for initial_message template)</label>
+            <input type="date" id="fee-reminder-duedate-input" class="input-field" style="font-size:.85rem;">
           </div>
         </div>
 
@@ -853,6 +863,125 @@
     </div>
 
     <!-- Modals Layer -->
+
+    <!-- Download Forms & Registers Modal -->
+    <div class="modal" id="download-forms-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; padding:16px;">
+      <div class="modal-content" style="max-width: 620px; width: 100%; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+          <h3 style="margin:0; font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+            <i data-lucide="file-text" style="color: var(--primary);"></i> Download Forms & Registers
+          </h3>
+          <span class="modal-close" id="download-forms-modal-close" style="cursor: pointer; padding: 4px;"><i data-lucide="x"></i></span>
+        </div>
+
+        <!-- Form Category Selector -->
+        <div style="display: flex; gap: 8px; margin-bottom: 16px; background: var(--bg-secondary, #1e293b); padding: 4px; border-radius: var(--radius-sm, 8px);">
+          <button type="button" class="btn df-tab-btn active" data-form-tab="attendance" style="flex: 1; font-size: 0.82rem; padding: 8px 6px;">
+            📋 Attendance Form
+          </button>
+          <button type="button" class="btn df-tab-btn" data-form-tab="marksheet" style="flex: 1; font-size: 0.82rem; padding: 8px 6px;">
+            📊 Mark Sheet
+          </button>
+          <button type="button" class="btn df-tab-btn" data-form-tab="details" style="flex: 1; font-size: 0.82rem; padding: 8px 6px;">
+            📞 Student Details
+          </button>
+        </div>
+
+        <!-- Tab 1: Attendance Register (31 Days Blank Grid) -->
+        <div id="df-tab-attendance" class="df-tab-content">
+          <div style="background: rgba(139, 92, 246, 0.08); border-left: 4px solid var(--primary); padding: 12px; border-radius: 4px; margin-bottom: 16px; font-size: 0.82rem; color: var(--text-main);">
+            <strong>Monthly Attendance Register</strong><br>
+            Generates a printable manual attendance form with student names in column 1, empty day columns 1 to 31 across the top, paginated at <strong>40 student names per page</strong> with tuition header.
+          </div>
+          <div class="form-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+            <div>
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Month & Year</label>
+              <input type="month" id="df-att-month" class="input-field">
+            </div>
+            <div>
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Stream / Combination</label>
+              <select id="df-att-combination" class="select-field">
+                <option value="ALL">All Combinations</option>
+                <option value="PCMB">PCMB</option>
+                <option value="PCMC">PCMC</option>
+                <option value="PCM">PCM</option>
+                <option value="PCB">PCB</option>
+              </select>
+            </div>
+          </div>
+          <button type="button" class="btn btn-primary btn-full" id="df-print-attendance-btn" style="padding: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px;">
+            <i data-lucide="printer"></i> Print / Save PDF Attendance Register
+          </button>
+        </div>
+
+        <!-- Tab 2: Test Mark Sheet & Signature Sheet -->
+        <div id="df-tab-marksheet" class="df-tab-content" style="display: none;">
+          <div style="background: rgba(139, 92, 246, 0.08); border-left: 4px solid var(--primary); padding: 12px; border-radius: 4px; margin-bottom: 16px; font-size: 0.82rem; color: var(--text-main);">
+            <strong>Subject-Wise Mark Sheet & Attendance Sign-off</strong><br>
+            Generates mark sheets with Student Name, Comb, Theory (TH) Marks, CET Marks, Total Marks, Top Subject/Remarks, and a <strong>Student Signature Column</strong> for attendance sign-off.
+          </div>
+          <div style="margin-bottom: 14px;">
+            <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Select Test Record</label>
+            <select id="df-mark-test-select" class="select-field">
+              <option value="BLANK">-- Blank Mark Sheet Template (For Conducting Test) --</option>
+            </select>
+          </div>
+          <div id="df-blank-test-inputs" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+            <div>
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Test Name</label>
+              <input type="text" id="df-blank-title" class="input-field" placeholder="e.g. Unit Test 1">
+            </div>
+            <div>
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Subject</label>
+              <input type="text" id="df-blank-subject" class="input-field" placeholder="e.g. Physics">
+            </div>
+            <div>
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Max Marks Info</label>
+              <input type="text" id="df-blank-maxmarks" class="input-field" placeholder="TH: 25 | CET: 25 | Total: 50">
+            </div>
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Filter Stream / Combination</label>
+            <select id="df-mark-combination" class="select-field">
+              <option value="ALL">All Combinations</option>
+              <option value="PCMB">PCMB</option>
+              <option value="PCMC">PCMC</option>
+              <option value="PCM">PCM</option>
+              <option value="PCB">PCB</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-primary btn-full" id="df-print-marksheet-btn" style="padding: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px;">
+            <i data-lucide="printer"></i> Print / Save PDF Mark Sheet
+          </button>
+        </div>
+
+        <!-- Tab 3: Student Details Download -->
+        <div id="df-tab-details" class="df-tab-content" style="display: none;">
+          <div style="background: rgba(139, 92, 246, 0.08); border-left: 4px solid var(--primary); padding: 12px; border-radius: 4px; margin-bottom: 16px; font-size: 0.82rem; color: var(--text-main);">
+            <strong>Student Details & Phone Numbers Download</strong><br>
+            Export all student saved numbers, roll numbers, combinations, and contact profiles in CSV/Excel format or printable PDF directory.
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Filter Combination</label>
+            <select id="df-details-combination" class="select-field">
+              <option value="ALL">All Combinations</option>
+              <option value="PCMB">PCMB</option>
+              <option value="PCMC">PCMC</option>
+              <option value="PCM">PCM</option>
+              <option value="PCB">PCB</option>
+            </select>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <button type="button" class="btn btn-secondary" id="df-download-csv-btn" style="padding: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <i data-lucide="download"></i> Download CSV / Excel
+            </button>
+            <button type="button" class="btn btn-primary" id="df-print-details-btn" style="padding: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <i data-lucide="printer"></i> Print PDF Directory
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Upload Resource Modal -->
     <div class="modal" id="upload-resource-modal">

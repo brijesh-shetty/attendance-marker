@@ -112,9 +112,9 @@ Thank you for your trust! 🙏
 ```
 Dear parent of {{1}} 🙏
 
-Just a reminder that tomorrow {{5}} is the last date for the fee payment.
+Just a reminder that tomorrow {{2}} is the last date for the fee payment.
 
-⏳ Balance Due: ₹{{4}}
+⏳ Balance Due: ₹{{3}}
 
 Kindly arrange today itself to avoid any interruption to classes.
 

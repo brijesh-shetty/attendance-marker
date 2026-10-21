@@ -423,9 +423,20 @@ class AppController {
   async sendFeeReminders() {
     const templateName = (document.getElementById('fee-reminder-template-input').value || '').trim();
     if (!templateName) return this.showToast('Enter a template name first.', 'danger');
+
+    // For initial_message template, read and validate the due date
+    let dueDate = null;
+    if (templateName === 'initial_message') {
+      const rawDate = (document.getElementById('fee-reminder-duedate-input')?.value || '').trim();
+      if (!rawDate) return this.showToast('Enter a due date for the initial_message template.', 'danger');
+      // Format from YYYY-MM-DD to DD/MM/YYYY for the WhatsApp message
+      const [y, m, d] = rawDate.split('-');
+      dueDate = `${d}/${m}/${y}`;
+    }
+
     const selected = Array.from(this.feeReminderSelection || []);
     if (!selected.length) return this.showToast('Select at least one student.', 'danger');
-    if (!await this.confirmAction(`Send WhatsApp reminder “${templateName}” to ${selected.length} student(s)?`)) return;
+    if (!await this.confirmAction(`Send WhatsApp reminder "${templateName}" to ${selected.length} student(s)?`)) return;
 
     const btn = document.getElementById('fee-reminder-send-btn');
     btn.disabled = true;
@@ -434,7 +445,9 @@ class AppController {
     lucide.createIcons();
 
     try {
-      const result = await db.sendFeeReminders({ studentIds: selected, templateName });
+      const payload = { studentIds: selected, templateName };
+      if (dueDate) payload.dueDate = dueDate;
+      const result = await db.sendFeeReminders(payload);
       // Surface the actual outcome — a total wipeout (0/N) is a danger toast
       // that includes the first error so the admin knows why (e.g. template
       // name typo → Meta 132001).
@@ -2649,6 +2662,9 @@ class AppController {
     // Student search input filter
     document.getElementById("student-search-input").addEventListener("input", () => this.loadStudentsList());
 
+    // Initialize Download Forms & Registers module handlers
+    this.initDownloadFormsEvents();
+
     // Attendance View Handlers
     document.getElementById("attendance-date-input").addEventListener("change", () => this.loadAttendanceSetup());
     document.getElementById("attendance-start-btn").addEventListener("click", () => {
@@ -2843,6 +2859,15 @@ class AppController {
     if (sendReminderBtn) sendReminderBtn.addEventListener("click", () => this.sendFeeReminders());
     const refreshLogBtn = document.getElementById("fee-reminder-log-refresh-btn");
     if (refreshLogBtn) refreshLogBtn.addEventListener("click", () => this.loadFeeReminderLog());
+
+    // Show/hide the due-date input based on the selected template
+    const templateSelect = document.getElementById("fee-reminder-template-input");
+    const dueDateGroup = document.getElementById("fee-reminder-duedate-group");
+    if (templateSelect && dueDateGroup) {
+      const toggleDueDate = () => { dueDateGroup.style.display = templateSelect.value === 'initial_message' ? '' : 'none'; };
+      templateSelect.addEventListener('change', toggleDueDate);
+      toggleDueDate(); // set initial state on page load
+    }
 
     // Notification / Broadcast Handlers
     document.getElementById("send-absentees-sms-btn").addEventListener("click", () => this.handleSendAbsenteesSMS());
@@ -4103,6 +4128,430 @@ Kindly take note of the above schedule and ensure that your child is well prepar
       this.loadFeeFollowups();
     } catch (error) {
       this.showToast(error.message || 'Failed to start follow-ups.', 'danger');
+    }
+  }
+
+  // ── Download Forms & Registers Module ──────────────────────────────
+  async openDownloadFormsModal() {
+    const modal = document.getElementById("download-forms-modal");
+    if (!modal) return;
+
+    // Set default month to current month YYYY-MM
+    const today = new Date();
+    const currentMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    const attMonthInput = document.getElementById("df-att-month");
+    if (attMonthInput && !attMonthInput.value) {
+      attMonthInput.value = currentMonthStr;
+    }
+
+    // Populate test selector
+    const testSelect = document.getElementById("df-mark-test-select");
+    if (testSelect) {
+      testSelect.innerHTML = `<option value="BLANK">-- Blank Mark Sheet Template (For Conducting Test) --</option>`;
+      try {
+        const tests = await db.getAllTests();
+        if (tests && tests.length > 0) {
+          tests.forEach(t => {
+            const opt = document.createElement("option");
+            opt.value = `${t.testId}||${t.subject}`;
+            opt.textContent = `${t.testId} - ${t.subject} (${t.date || 'No Date'})`;
+            testSelect.appendChild(opt);
+          });
+        }
+      } catch (err) {
+        console.warn("Could not fetch test list for download forms:", err);
+      }
+    }
+
+    // Reset blank inputs display state
+    const blankInputs = document.getElementById("df-blank-test-inputs");
+    if (blankInputs) blankInputs.style.display = "grid";
+
+    modal.style.display = "flex";
+    lucide.createIcons();
+  }
+
+  closeDownloadFormsModal() {
+    const modal = document.getElementById("download-forms-modal");
+    if (modal) modal.style.display = "none";
+  }
+
+  initDownloadFormsEvents() {
+    const triggerBtn = document.getElementById("open-download-forms-modal-btn");
+    if (triggerBtn) triggerBtn.addEventListener("click", () => this.openDownloadFormsModal());
+
+    const closeBtn = document.getElementById("download-forms-modal-close");
+    if (closeBtn) closeBtn.addEventListener("click", () => this.closeDownloadFormsModal());
+
+    // Tab buttons
+    document.querySelectorAll(".df-tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".df-tab-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".df-tab-content").forEach(c => c.style.display = "none");
+        btn.classList.add("active");
+        const tab = btn.dataset.formTab;
+        const target = document.getElementById(`df-tab-${tab}`);
+        if (target) target.style.display = "block";
+      });
+    });
+
+    // Test select change listener
+    const testSelect = document.getElementById("df-mark-test-select");
+    if (testSelect) {
+      testSelect.addEventListener("change", () => {
+        const blankInputs = document.getElementById("df-blank-test-inputs");
+        if (blankInputs) {
+          blankInputs.style.display = (testSelect.value === "BLANK") ? "grid" : "none";
+        }
+      });
+    }
+
+    // Print / Export button handlers
+    const printAttBtn = document.getElementById("df-print-attendance-btn");
+    if (printAttBtn) printAttBtn.addEventListener("click", () => this.generateAttendanceRegisterPrint());
+
+    const printMarkBtn = document.getElementById("df-print-marksheet-btn");
+    if (printMarkBtn) printMarkBtn.addEventListener("click", () => this.generateMarkSheetPrint());
+
+    const downloadCsvBtn = document.getElementById("df-download-csv-btn");
+    if (downloadCsvBtn) downloadCsvBtn.addEventListener("click", () => this.downloadStudentDetailsCSV());
+
+    const printDetailsBtn = document.getElementById("df-print-details-btn");
+    if (printDetailsBtn) printDetailsBtn.addEventListener("click", () => this.generateStudentDetailsPDF());
+  }
+
+  async generateAttendanceRegisterPrint() {
+    try {
+      const monthVal = document.getElementById("df-att-month").value;
+      const combVal = document.getElementById("df-att-combination").value;
+
+      let monthNameStr = "MONTHLY";
+      if (monthVal) {
+        const [yearStr, monthStr] = monthVal.split('-');
+        const dateObj = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
+        monthNameStr = dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' }).toUpperCase();
+      }
+
+      const allStudents = await db.getStudents();
+      let students = allStudents.filter(s => !s.discontinued);
+      if (combVal !== "ALL") {
+        students = students.filter(s => (s.combination || '').toUpperCase() === combVal.toUpperCase());
+      }
+
+      if (students.length === 0) {
+        this.showToast("No students found for the selected combination.", "danger");
+        return;
+      }
+
+      students.sort((a, b) => a.name.localeCompare(b.name));
+
+      const pageSize = 40; // 40 students per page
+      const totalPages = Math.ceil(students.length / pageSize);
+
+      let html = "";
+      for (let pIdx = 0; pIdx < totalPages; pIdx++) {
+        const startIdx = pIdx * pageSize;
+        const pageStudents = students.slice(startIdx, startIdx + pageSize);
+
+        html += `
+          <div class="print-page" style="page-break-after: always; break-after: page;">
+            <div class="print-header" style="text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 8px;">
+              <h1 style="font-size: 20pt !important; font-weight: 800 !important; margin: 0 0 4px 0 !important; letter-spacing: 0.05em !important; text-transform: uppercase !important;">GALAXY ACADEMY</h1>
+              <p class="address" style="font-size: 8.5pt !important; font-weight: 600 !important; margin: 0 !important; line-height: 1.3 !important;">
+                No:100 , Above Punjab National Bank , KHB Colony, 6th Block Koramangala , Bangalore - 95. &nbsp;|&nbsp; Ph: 8088761586 / 6304300052
+              </p>
+            </div>
+            <div class="print-meta" style="display: flex; justify-content: center; align-items: center; margin-bottom: 6px; font-size: 11pt; font-weight: 800; border-bottom: 1px solid #000; padding-bottom: 4px;">
+              <span>${monthNameStr}</span>
+            </div>
+            <table class="print-table attendance-grid-table" style="width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 4px;">
+              <thead>
+                <tr>
+                  <th style="width: 25px; text-align: center; font-size: 7.5pt; border: 1px solid #000; background-color: #f1f5f9; padding: 2px 1px;">#</th>
+                  <th style="width: 165px; text-align: left; font-size: 7.5pt; border: 1px solid #000; background-color: #f1f5f9; padding: 2px 4px;">Student Name</th>
+                  ${Array.from({length: 31}, (_, i) => `<th class="attendance-day-col" style="width: 2.2%; text-align: center; font-size: 7.5pt; border: 1px solid #000; background-color: #f1f5f9; padding: 2px 0;">${i+1}</th>`).join('')}
+                </tr>
+              </thead>
+              <tbody>
+                ${pageStudents.map((st, idx) => `
+                  <tr>
+                    <td class="text-center" style="font-size: 7.8pt; border: 1px solid #000; text-align: center; padding: 2px 1px;">${startIdx + idx + 1}</td>
+                    <td style="font-size: 8.2pt; font-weight: 600; border: 1px solid #000; padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                      ${this.escapeHtml(st.name)} ${st.combination ? `<span style="font-size: 0.7rem; color: #555; font-weight: normal;">(${st.combination})</span>` : ''}
+                    </td>
+                    ${Array.from({length: 31}, () => `<td class="attendance-day-col" style="border: 1px solid #000; padding: 2px 0;">&nbsp;</td>`).join('')}
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      const printRoot = document.getElementById("print-sheet-root");
+      printRoot.innerHTML = html;
+
+      this.closeDownloadFormsModal();
+
+      document.body.classList.add("print-landscape");
+      window.print();
+      setTimeout(() => {
+        document.body.classList.remove("print-landscape");
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error generating attendance register print:", err);
+      this.showToast("Failed to generate printable attendance form.", "danger");
+    }
+  }
+
+  async generateMarkSheetPrint() {
+    try {
+      const testVal = document.getElementById("df-mark-test-select").value;
+      const combVal = document.getElementById("df-mark-combination").value;
+      const allStudents = await db.getStudents();
+      let students = allStudents.filter(s => !s.discontinued);
+
+      if (combVal !== "ALL") {
+        students = students.filter(s => (s.combination || '').toUpperCase() === combVal.toUpperCase());
+      }
+
+      if (students.length === 0) {
+        this.showToast("No students found for the selected combination.", "danger");
+        return;
+      }
+
+      students.sort((a, b) => a.name.localeCompare(b.name));
+
+      let testTitle = "TEST MARK REGISTER";
+      let subjectName = "";
+      let maxMarksInfo = "TH: 25 | CET: 25 | Total: 50";
+      let testResultsMap = {};
+      let isRecorded = false;
+
+      if (testVal !== "BLANK") {
+        const [tId, tSub] = testVal.split("||");
+        isRecorded = true;
+        testTitle = tId;
+        subjectName = tSub;
+        const meta = await db.getTestMetadata(tId, tSub);
+        maxMarksInfo = `Max: TH ${meta.theoryTotal || 25} | CET ${meta.cetTotal || 25} | Total ${meta.sumTotal || 50}`;
+
+        try {
+          const rawResults = await db.getTestMarks(tId, tSub);
+          if (Array.isArray(rawResults)) {
+            rawResults.forEach(r => {
+              testResultsMap[r.studentId] = r;
+            });
+          }
+        } catch (e) {
+          console.warn("Could not load test results:", e);
+        }
+      } else {
+        const customTitle = document.getElementById("df-blank-title").value.trim();
+        const customSubject = (document.getElementById("df-blank-subject") || {}).value || '';
+        const customMax = document.getElementById("df-blank-maxmarks").value.trim();
+        if (customTitle) testTitle = customTitle.toUpperCase();
+        if (customSubject.trim()) subjectName = customSubject.trim();
+        if (customMax) maxMarksInfo = customMax;
+      }
+
+      const pageSize = 40; // 40 students per page
+      const totalPages = Math.ceil(students.length / pageSize);
+
+      let html = "";
+      for (let pIdx = 0; pIdx < totalPages; pIdx++) {
+        const startIdx = pIdx * pageSize;
+        const pageStudents = students.slice(startIdx, startIdx + pageSize);
+
+        html += `
+          <div class="print-page" style="page-break-after: always; break-after: page;">
+            <div class="print-header" style="text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 8px;">
+              <h1 style="font-size: 20pt !important; font-weight: 800 !important; margin: 0 0 4px 0 !important; letter-spacing: 0.05em !important; text-transform: uppercase !important;">GALAXY ACADEMY</h1>
+              <p class="address" style="font-size: 8.5pt !important; font-weight: 600 !important; margin: 0 !important; line-height: 1.3 !important;">
+                No:100 , Above Punjab National Bank , KHB Colony, 6th Block Koramangala , Bangalore - 95. &nbsp;|&nbsp; Ph: 8088761586 / 6304300052
+              </p>
+            </div>
+            <div class="print-meta" style="display: flex; flex-direction: column; margin-bottom: 8px; font-size: 9.5pt; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 4px;">
+              <div style="font-size: 12pt; font-weight: 800; text-transform: uppercase; text-align: center;">${this.escapeHtml(testTitle)}</div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                <span>${subjectName ? 'Subject: ' + this.escapeHtml(subjectName) : ''}</span>
+                <span>${this.escapeHtml(maxMarksInfo)}</span>
+              </div>
+            </div>
+            <table class="print-table" style="width: 100%; border-collapse: collapse; margin-top: 4px;">
+              <thead>
+                <tr>
+                  <th style="width: 28px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px 2px;">#</th>
+                  <th style="text-align: left; border: 1px solid #000; background-color: #f1f5f9; padding: 4px 6px;">Student Name</th>
+                  <th style="width: 60px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">Comb</th>
+                  <th class="sig-col" style="width: 110px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">Student Signature</th>
+                  <th style="width: 75px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">TH Marks</th>
+                  <th style="width: 75px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">CET Marks</th>
+                  <th style="width: 75px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${pageStudents.map((st, idx) => {
+                  const res = testResultsMap[st.id] || {};
+                  const thVal = isRecorded ? (res.theoryMarks !== undefined && res.theoryMarks !== null ? res.theoryMarks : '-') : '';
+                  const cetVal = isRecorded ? (res.cetMarks !== undefined && res.cetMarks !== null ? res.cetMarks : '-') : '';
+                  const totVal = isRecorded ? (res.totalMarks !== undefined && res.totalMarks !== null ? res.totalMarks : '-') : '';
+
+                  return `
+                    <tr>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px 2px; font-size: 8.5pt;">${startIdx + idx + 1}</td>
+                      <td style="border: 1px solid #000; padding: 4px 6px; font-weight: 600; font-size: 9pt;">${this.escapeHtml(st.name)}</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-size: 8.5pt;">${this.escapeHtml(st.combination || '')}</td>
+                      <td style="border: 1px solid #000; padding: 4px; height: 22px;">&nbsp;</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-weight: 600; font-size: 9pt;">${thVal}</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-weight: 600; font-size: 9pt;">${cetVal}</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-weight: 800; font-size: 9pt; color: #000;">${totVal}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      const printRoot = document.getElementById("print-sheet-root");
+      printRoot.innerHTML = html;
+
+      this.closeDownloadFormsModal();
+      window.print();
+    } catch (err) {
+      console.error("Error generating mark sheet print:", err);
+      this.showToast("Failed to generate printable mark sheet.", "danger");
+    }
+  }
+
+  async downloadStudentDetailsCSV() {
+    try {
+      const combVal = document.getElementById("df-details-combination").value;
+      const allStudents = await db.getStudents();
+      let students = allStudents.filter(s => !s.discontinued);
+
+      if (combVal !== "ALL") {
+        students = students.filter(s => (s.combination || '').toUpperCase() === combVal.toUpperCase());
+      }
+
+      if (students.length === 0) {
+        this.showToast("No students found for the selected combination.", "danger");
+        return;
+      }
+
+      students.sort((a, b) => a.name.localeCompare(b.name));
+
+      let csvContent = "\uFEFF";
+      csvContent += '"S.No","Student Name","Stream/Combination","College","Phone 1","Phone 2","Status"\n';
+
+      students.forEach((st, idx) => {
+        const name = (st.name || '').replace(/"/g, '""');
+        const comb = (st.combination || '').replace(/"/g, '""');
+        const college = (st.college || '').replace(/"/g, '""');
+        const phone1 = (st.phone || '').toString().replace(/"/g, '""');
+        const phone2 = (st.parentPhone || '').toString().replace(/"/g, '""');
+        const status = st.discontinued ? "Discontinued" : "Active";
+
+        csvContent += `"${idx + 1}","${name}","${comb}","${college}","${phone1}","${phone2}","${status}"\n`;
+      });
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `galaxy_academy_students_${combVal.toLowerCase()}_${this.getLocalDateString()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      this.showToast("Student details CSV downloaded successfully.");
+      this.closeDownloadFormsModal();
+    } catch (err) {
+      console.error("Error downloading student details CSV:", err);
+      this.showToast("Failed to download CSV file.", "danger");
+    }
+  }
+
+  async generateStudentDetailsPDF() {
+    try {
+      const combVal = document.getElementById("df-details-combination").value;
+      const allStudents = await db.getStudents();
+      let students = allStudents.filter(s => !s.discontinued);
+
+      if (combVal !== "ALL") {
+        students = students.filter(s => (s.combination || '').toUpperCase() === combVal.toUpperCase());
+      }
+
+      if (students.length === 0) {
+        this.showToast("No students found for the selected combination.", "danger");
+        return;
+      }
+
+      students.sort((a, b) => a.name.localeCompare(b.name));
+
+      const pageSize = 40; // 40 students per page
+      const totalPages = Math.ceil(students.length / pageSize);
+
+      let html = "";
+      for (let pIdx = 0; pIdx < totalPages; pIdx++) {
+        const startIdx = pIdx * pageSize;
+        const pageStudents = students.slice(startIdx, startIdx + pageSize);
+
+        html += `
+          <div class="print-page" style="page-break-after: always; break-after: page;">
+            <div class="print-header" style="text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 8px;">
+              <h1 style="font-size: 20pt !important; font-weight: 800 !important; margin: 0 0 4px 0 !important; letter-spacing: 0.05em !important; text-transform: uppercase !important;">GALAXY ACADEMY</h1>
+              <p class="address" style="font-size: 8.5pt !important; font-weight: 600 !important; margin: 0 !important; line-height: 1.3 !important;">
+                No:100 , Above Punjab National Bank , KHB Colony, 6th Block Koramangala , Bangalore - 95. &nbsp;|&nbsp; Ph: 8088761586 / 6304300052
+              </p>
+            </div>
+            <div class="print-meta" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 9.5pt; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 4px;">
+              <span>STUDENT CONTACT DIRECTORY</span>
+              <span>Stream: ${combVal === 'ALL' ? 'All Combinations' : combVal}</span>
+            </div>
+            <table class="print-table" style="width: 100%; border-collapse: collapse; margin-top: 4px;">
+              <thead>
+                <tr>
+                  <th style="width: 28px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px 2px;">#</th>
+                  <th style="text-align: left; border: 1px solid #000; background-color: #f1f5f9; padding: 4px 6px;">Student Name</th>
+                  <th style="width: 60px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">Comb</th>
+                  <th style="width: 140px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">Phone 1</th>
+                  <th style="width: 140px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">Phone 2</th>
+                  <th style="width: 75px; text-align: center; border: 1px solid #000; background-color: #f1f5f9; padding: 4px;">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${pageStudents.map((st, idx) => {
+                  const phone2 = st.parentPhone || '';
+                  return `
+                    <tr>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px 2px; font-size: 8.5pt;">${startIdx + idx + 1}</td>
+                      <td style="border: 1px solid #000; padding: 4px 6px; font-weight: 600; font-size: 9pt;">${this.escapeHtml(st.name)}</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-size: 8.5pt;">${this.escapeHtml(st.combination || '')}</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-weight: 600; font-size: 8.8pt;">${this.escapeHtml(st.phone || '')}</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-size: 8.8pt;">${this.escapeHtml(phone2)}</td>
+                      <td class="text-center" style="border: 1px solid #000; padding: 4px; font-size: 8.5pt;">${st.discontinued ? 'Discontinued' : 'Active'}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      const printRoot = document.getElementById("print-sheet-root");
+      printRoot.innerHTML = html;
+
+      this.closeDownloadFormsModal();
+      window.print();
+    } catch (err) {
+      console.error("Error generating student details print:", err);
+      this.showToast("Failed to generate printable student directory.", "danger");
     }
   }
 

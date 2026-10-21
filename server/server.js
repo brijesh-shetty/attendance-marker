@@ -1425,6 +1425,7 @@ app.post('/api/admin/fee-reminders', requireSameOrigin, requireAdmin, async (req
   try {
     const templateName = text(req.body.templateName, 'Template name', { required: true, max: 100 });
     const templateLanguage = text(req.body.templateLanguage, 'Template language', { max: 10 }) || 'en';
+    const dueDate = text(req.body.dueDate || '', 'Due date', { max: 20 });
     const rawIds = Array.isArray(req.body.studentIds) ? req.body.studentIds : [];
     if (!rawIds.length) throw new Error('Select at least one student to remind.');
     if (rawIds.length > 200) throw new Error('Too many recipients in one send.');
@@ -1463,10 +1464,19 @@ app.post('/api/admin/fee-reminders', requireSameOrigin, requireAdmin, async (req
       const received = Array.isArray(pay.transactions)
         ? pay.transactions.reduce((sum, t) => sum + (Number(t?.amount) || 0), 0) : 0;
       const balance = Math.max(totalFee - received, 0);
+      // Build params based on which template is selected
+      let params;
+      if (templateName === 'initial_message') {
+        // initial_message: {{1}} name, {{2}} balance, {{3}} due date
+        params = [student.name, String(balance), dueDate || 'N/A'];
+      } else {
+        // All other templates: {{1}} name, {{2}} total, {{3}} received, {{4}} balance
+        params = [student.name, String(totalFee), String(received), String(balance)];
+      }
       const result = await notificationService.sendTemplate({
         to: phone,
         templateName,
-        params: [student.name, String(totalFee), String(received), String(balance)],
+        params,
         language: templateLanguage
       });
       results.push({
@@ -1482,6 +1492,7 @@ app.post('/api/admin/fee-reminders', requireSameOrigin, requireAdmin, async (req
     const sentBy = req.user && req.user.role === 'admin' ? 'admin' : 'system';
     const logDoc = {
       batchId: bid, date: today, templateName, templateLanguage,
+      dueDate: dueDate || null,
       sentAt: Date.now(), sentBy,
       total: results.length,
       succeeded: results.filter(r => r.success).length,
