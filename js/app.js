@@ -424,19 +424,19 @@ class AppController {
     const templateName = (document.getElementById('fee-reminder-template-input').value || '').trim();
     if (!templateName) return this.showToast('Enter a template name first.', 'danger');
 
-    // For initial_message template, read and validate the due date
-    let dueDate = null;
-    if (templateName === 'initial_message') {
-      const rawDate = (document.getElementById('fee-reminder-duedate-input')?.value || '').trim();
-      if (!rawDate) return this.showToast('Enter a due date for the initial_message template.', 'danger');
-      // Format from YYYY-MM-DD to DD/MM/YYYY for the WhatsApp message
-      const [y, m, d] = rawDate.split('-');
-      dueDate = `${d}/${m}/${y}`;
+    // eve_reminder has its own Meta template body variables:
+    // {{1}} student name, {{2}} deadline date, {{3}} balance due.
+    let deadline = null;
+    if (templateName === 'eve_reminder') {
+      const rawDate = (document.getElementById('fee-reminder-deadline-input')?.value || '').trim();
+      if (!rawDate) return this.showToast('Enter a deadline date for the eve_reminder template.', 'danger');
+      const [year, month, day] = rawDate.split('-');
+      deadline = `${day}/${month}/${year}`;
     }
 
     const selected = Array.from(this.feeReminderSelection || []);
     if (!selected.length) return this.showToast('Select at least one student.', 'danger');
-    if (!await this.confirmAction(`Send WhatsApp reminder "${templateName}" to ${selected.length} student(s)?`)) return;
+    if (!await this.confirmAction(`Send WhatsApp reminder “${templateName}” to ${selected.length} student(s)?`)) return;
 
     const btn = document.getElementById('fee-reminder-send-btn');
     btn.disabled = true;
@@ -446,7 +446,7 @@ class AppController {
 
     try {
       const payload = { studentIds: selected, templateName };
-      if (dueDate) payload.dueDate = dueDate;
+      if (deadline) payload.deadline = deadline;
       const result = await db.sendFeeReminders(payload);
       // Surface the actual outcome — a total wipeout (0/N) is a danger toast
       // that includes the first error so the admin knows why (e.g. template
@@ -2860,13 +2860,15 @@ class AppController {
     const refreshLogBtn = document.getElementById("fee-reminder-log-refresh-btn");
     if (refreshLogBtn) refreshLogBtn.addEventListener("click", () => this.loadFeeReminderLog());
 
-    // Show/hide the due-date input based on the selected template
+    // Ask for the one date required by the eve_reminder Meta template.
     const templateSelect = document.getElementById("fee-reminder-template-input");
-    const dueDateGroup = document.getElementById("fee-reminder-duedate-group");
-    if (templateSelect && dueDateGroup) {
-      const toggleDueDate = () => { dueDateGroup.style.display = templateSelect.value === 'initial_message' ? '' : 'none'; };
-      templateSelect.addEventListener('change', toggleDueDate);
-      toggleDueDate(); // set initial state on page load
+    const deadlineGroup = document.getElementById("fee-reminder-deadline-group");
+    if (templateSelect && deadlineGroup) {
+      const toggleDeadline = () => {
+        deadlineGroup.style.display = templateSelect.value === 'eve_reminder' ? '' : 'none';
+      };
+      templateSelect.addEventListener('change', toggleDeadline);
+      toggleDeadline();
     }
 
     // Notification / Broadcast Handlers

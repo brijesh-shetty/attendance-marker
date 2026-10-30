@@ -475,7 +475,6 @@
             <div class="input-group" style="margin:0;">
               <label for="fee-reminder-template-input" style="font-size:.8rem;">Template name (must be approved on Meta)</label>
               <select id="fee-reminder-template-input" class="select-field" style="font-size:.85rem;">
-                <option value="initial_message">initial_message (Fee Due Reminder)</option>
                 <option value="fee_reminder">fee_reminder (Partial Payment)</option>
                 <option value="fee_reminder_zero">fee_reminder_zero (0% Paid)</option>
                 <option value="eve_reminder">eve_reminder (1 Day Before Deadline)</option>
@@ -489,9 +488,9 @@
               <i data-lucide="send" style="width:14px; height:14px;"></i> Send
             </button>
           </div>
-          <div id="fee-reminder-duedate-group" class="input-group" style="margin:10px 0 0;">
-            <label for="fee-reminder-duedate-input" style="font-size:.8rem;">Due date (for initial_message template)</label>
-            <input type="date" id="fee-reminder-duedate-input" class="input-field" style="font-size:.85rem;">
+          <div id="fee-reminder-deadline-group" class="input-group" style="margin:10px 0 0; display:none;">
+            <label for="fee-reminder-deadline-input" style="font-size:.8rem;">Deadline date (for eve_reminder template)</label>
+            <input type="date" id="fee-reminder-deadline-input" class="input-field" style="font-size:.85rem;">
           </div>
         </div>
 
