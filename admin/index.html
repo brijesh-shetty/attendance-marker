@@ -267,15 +267,8 @@
               <!-- Rendered by JS -->
             </div>
             <div class="input-group" id="attendance-subject-group" style="margin-top: 12px; margin-bottom: 12px; width: 100%;">
-              <label for="attendance-subject-select" style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);">Class Subject for Notification</label>
-              <select id="attendance-subject-select" class="select-field" style="height: 38px; font-size: 0.85rem;">
-                <option value="Physics">Physics</option>
-                <option value="Chemistry">Chemistry</option>
-                <option value="Maths">Maths</option>
-                <option value="Biology">Biology</option>
-                <option value="Computer Science">Computer Science</option>
-                <option value="Tuition">Tuition (General)</option>
-              </select>
+              <label for="attendance-subject-input" style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);">Class Subject for Notification</label>
+              <input type="text" id="attendance-subject-input" class="input-field" placeholder="Enter subject name (e.g. Physics, Chemistry, Maths, Biology, Computer Science)" style="height: 38px; font-size: 0.85rem;">
             </div>
             <div class="action-button-group">
               <button class="btn btn-secondary" id="download-absentees-btn">
@@ -678,6 +671,11 @@
               <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">4. Bio / CS</label>
               <input type="date" id="exam-date-biocs" class="input-field">
             </div>
+          </div>
+
+          <div class="input-group" style="margin-top: 12px;">
+            <label for="exam-portion-input" style="font-size: 0.85rem; font-weight: 600;">Exam Portion / Syllabus</label>
+            <textarea id="exam-portion-input" class="textarea-field" rows="3" placeholder="Enter syllabus/portion details... e.g. Chapters 1-5, Units 1-3, etc."></textarea>
           </div>
         </div>
 
@@ -1174,7 +1172,7 @@
         </div>
         
         <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">
-          Send today's absentee summary report to Admin via WhatsApp or direct API notification.
+          Send today's absentee summary report to Admin via direct API notification.
         </p>
 
         <!-- Admin Name & Phone Inputs -->
@@ -1208,20 +1206,13 @@
           <!-- Dynamically populated chips -->
         </div>
 
-        <!-- Subject Selector & Meta Template Name Customization -->
+        <!-- Subject & Meta Template Name Customization -->
         <div class="admin-msg-grid-2" style="margin-bottom: 14px;">
           <div class="input-group" style="margin-bottom: 0;">
-            <label for="admin-subject-select" style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">
+            <label for="admin-subject-input" style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">
               Class Subject
             </label>
-            <select id="admin-subject-select" class="select-field" style="height: 38px; font-size: 0.85rem;">
-              <option value="Physics">Physics</option>
-              <option value="Chemistry">Chemistry</option>
-              <option value="Maths">Maths</option>
-              <option value="Biology">Biology</option>
-              <option value="Computer Science">Computer Science</option>
-              <option value="Tuition">Tuition (General)</option>
-            </select>
+            <input type="text" id="admin-subject-input" class="input-field" placeholder="Enter class subject" style="height: 38px; font-size: 0.85rem;">
           </div>
           <div class="input-group" style="margin-bottom: 0;">
             <label for="admin-template-name-input" style="font-size: 0.82rem; font-weight: 600; color: var(--text-main); display: flex; justify-content: space-between;">
@@ -1247,9 +1238,6 @@
           </button>
           <button class="btn btn-secondary" id="send-admin-api-btn" style="flex: 1.3; padding: 10px 12px; font-size: 0.82rem; border-color: var(--primary); color: var(--primary-hover);">
             <i data-lucide="send"></i> Direct Alert (API)
-          </button>
-          <button class="btn btn-primary" id="open-whatsapp-admin-btn" style="flex: 1.3; padding: 10px 12px; font-size: 0.82rem; background-color: #25D366; border-color: #25D366; color: #fff;">
-            <i data-lucide="message-circle"></i> Open WhatsApp
           </button>
         </div>
       </div>

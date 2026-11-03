@@ -1414,8 +1414,8 @@ class AppController {
     const modal = document.getElementById("send-admin-modal");
     const phoneInput = document.getElementById("admin-phone-input");
     const nameInput = document.getElementById("admin-name-input");
-    const mainSubjectEl = document.getElementById("attendance-subject-select");
-    const adminSubjectEl = document.getElementById("admin-subject-select");
+    const mainSubjectEl = document.getElementById("attendance-subject-input");
+    const adminSubjectEl = document.getElementById("admin-subject-input");
 
     if (mainSubjectEl && adminSubjectEl) {
       adminSubjectEl.value = mainSubjectEl.value;
@@ -1439,9 +1439,9 @@ class AppController {
 
   async updateAdminReportTemplate() {
     const dateVal = document.getElementById("attendance-date-input").value;
-    const adminSubjectEl = document.getElementById("admin-subject-select");
-    const mainSubjectEl = document.getElementById("attendance-subject-select");
-    const subjectVal = (adminSubjectEl && adminSubjectEl.value) || (mainSubjectEl && mainSubjectEl.value) || "Tuition";
+    const adminSubjectEl = document.getElementById("admin-subject-input");
+    const mainSubjectEl = document.getElementById("attendance-subject-input");
+    const subjectVal = (adminSubjectEl && adminSubjectEl.value.trim()) || (mainSubjectEl && mainSubjectEl.value.trim()) || "Tuition";
 
     const adminNameVal = (document.getElementById("admin-name-input").value || "Anand Sir").trim();
 
@@ -1487,28 +1487,6 @@ class AppController {
     });
   }
 
-  handleOpenWhatsAppAdmin() {
-    const phoneInput = document.getElementById("admin-phone-input");
-    const rawPhone = phoneInput.value.trim();
-    const text = document.getElementById("admin-report-template").value;
-
-    if (rawPhone) {
-      this.saveCurrentAdminNumber();
-    }
-
-    let cleanPhone = rawPhone.replace(/[^0-9]/g, "");
-    if (cleanPhone.length === 10) {
-      cleanPhone = "91" + cleanPhone;
-    }
-
-    const encodedText = encodeURIComponent(text);
-    const waUrl = cleanPhone
-      ? `https://wa.me/${cleanPhone}?text=${encodedText}`
-      : `https://api.whatsapp.com/send?text=${encodedText}`;
-
-    window.open(waUrl, "_blank");
-  }
-
   async handleSendAdminAPI() {
     const phoneInput = document.getElementById("admin-phone-input");
     const rawPhone = phoneInput.value.trim();
@@ -1531,8 +1509,9 @@ class AppController {
     this.showToast("Sending absentee report to Admin via server API...");
 
     const dateVal = document.getElementById("attendance-date-input").value;
-    const subjectEl = document.getElementById("attendance-subject-select");
-    const subjectVal = subjectEl ? subjectEl.value : "Tuition";
+    const adminSubjectEl = document.getElementById("admin-subject-input");
+    const mainSubjectEl = document.getElementById("attendance-subject-input");
+    const subjectVal = (adminSubjectEl && adminSubjectEl.value.trim()) || (mainSubjectEl && mainSubjectEl.value.trim()) || "Tuition";
 
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
@@ -1661,6 +1640,36 @@ class AppController {
   /* =========================================================================
      TEST SERIES PORTAL
      ========================================================================= */
+  // A maximum mark of 0 is meaningful (for example, when a test has no CET
+  // component). Keep it distinct from an empty or invalid field, which should
+  // still receive the existing default.
+  getTestMaxMark(value, fallback) {
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return fallback;
+    }
+
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : fallback;
+  }
+
+  getTestMaxMarks(metadata = {}) {
+    const cetTotal = this.getTestMaxMark(metadata.cetTotal, 25);
+    const theoryTotal = this.getTestMaxMark(metadata.theoryTotal, 25);
+    return {
+      cetTotal,
+      theoryTotal,
+      sumTotal: this.getTestMaxMark(metadata.sumTotal, cetTotal + theoryTotal)
+    };
+  }
+
+  getTestMaxMarksFromForm() {
+    return this.getTestMaxMarks({
+      cetTotal: document.getElementById("test-cet-total")?.value,
+      theoryTotal: document.getElementById("test-theory-total")?.value,
+      sumTotal: document.getElementById("test-sum-total")?.value
+    });
+  }
+
   async loadTestList() {
     const type = document.getElementById("test-type-select").value;
     const num = document.getElementById("test-num-input").value.trim();
@@ -1691,10 +1700,10 @@ class AppController {
       return;
     }
 
-    const meta = await db.getTestMetadata(this.selectedTest, this.selectedSubject);
-    const cetTotal = meta.cetTotal !== undefined ? meta.cetTotal : 25;
-    const theoryTotal = meta.theoryTotal !== undefined ? meta.theoryTotal : 25;
-    const sumTotal = cetTotal + theoryTotal;
+    // Use the values currently entered in the setup form. A new test has no
+    // saved metadata yet, so reading only from the database would incorrectly
+    // show the 25/25/50 defaults in the marks-entry header.
+    const { cetTotal, theoryTotal, sumTotal } = this.getTestMaxMarksFromForm();
 
     // Update form header labels dynamically
     const headerCet = document.getElementById("header-cet-label");
@@ -1881,9 +1890,7 @@ class AppController {
     const num = document.getElementById("test-num-input").value.trim();
     const date = document.getElementById("test-date-input").value;
 
-    const cetTotal = Number(document.getElementById("test-cet-total").value) || 25;
-    const theoryTotal = Number(document.getElementById("test-theory-total").value) || 25;
-    const sumTotal = Number(document.getElementById("test-sum-total").value) || (cetTotal + theoryTotal);
+    const { cetTotal, theoryTotal, sumTotal } = this.getTestMaxMarksFromForm();
 
     const meta = {
       testType: type,
@@ -1934,9 +1941,7 @@ class AppController {
     const syllabusText = syllabus[this.selectedSubject] || "General Core Syllabus Modules";
 
     const meta = await db.getTestMetadata(this.selectedTest, this.selectedSubject);
-    const cetTotal = meta.cetTotal !== undefined ? meta.cetTotal : 25;
-    const theoryTotal = meta.theoryTotal !== undefined ? meta.theoryTotal : 25;
-    const sumTotal = cetTotal + theoryTotal;
+    const { cetTotal, theoryTotal, sumTotal } = this.getTestMaxMarks(meta);
 
     let totalScore = 0;
     let scoreCount = 0;
@@ -1991,9 +1996,9 @@ class AppController {
       const data = scores[student.id] || { present: true, cetMarks: "", theoryMarks: "", totalMarks: "", marks: "" };
       const isPresent = data.present !== false;
 
-      let cetVal = isPresent ? (data.cetMarks !== undefined ? data.cetMarks : "") : "AB";
-      let theoryVal = isPresent ? (data.theoryMarks !== undefined ? data.theoryMarks : "") : "AB";
-      let totalVal = isPresent ? (data.totalMarks !== undefined ? data.totalMarks : (data.marks || "")) : "AB";
+      let cetVal = !isPresent ? "AB" : (data.cetMarks !== undefined && data.cetMarks !== null && data.cetMarks !== "" ? data.cetMarks : "");
+      let theoryVal = !isPresent ? "AB" : (data.theoryMarks !== undefined && data.theoryMarks !== null && data.theoryMarks !== "" ? data.theoryMarks : "");
+      let totalVal = !isPresent ? "AB" : (data.totalMarks !== undefined && data.totalMarks !== null && data.totalMarks !== "" ? data.totalMarks : (data.marks || ""));
 
       const statusClass = !isPresent ? "text-danger" : "";
 
@@ -2022,7 +2027,13 @@ class AppController {
 
   async handleSendAbsenteesSMS() {
     const dateVal = document.getElementById("attendance-date-input").value;
-    const subjectVal = document.getElementById("attendance-subject-select").value;
+    const subjectInput = document.getElementById("attendance-subject-input");
+    const subjectVal = subjectInput ? subjectInput.value.trim() : "";
+    if (!subjectVal) {
+      this.showToast("Please enter the class subject before sending notifications.", "danger");
+      subjectInput?.focus();
+      return;
+    }
     const students = await db.getStudents();
     const records = await db.getAttendance(dateVal);
 
@@ -2159,20 +2170,16 @@ class AppController {
 
     // Load CET / Theory totals
     const meta = await db.getTestMetadata(testId, subject);
-    const cetTotal = meta.cetTotal !== undefined ? meta.cetTotal : 25;
-    const theoryTotal = meta.theoryTotal !== undefined ? meta.theoryTotal : 25;
+    const { cetTotal, theoryTotal, sumTotal } = this.getTestMaxMarks(meta);
     const cetTotalEl = document.getElementById("test-cet-total");
     const theoryTotalEl = document.getElementById("test-theory-total");
     const sumTotalEl = document.getElementById("test-sum-total");
 
     if (cetTotalEl) cetTotalEl.value = cetTotal;
     if (theoryTotalEl) theoryTotalEl.value = theoryTotal;
-    // Honour a stored custom sumTotal (e.g. 40 when cet+theory happens to be 50);
-    // fall back to the cet+theory sum when the metadata doesn't provide one.
-    const storedSum = Number(meta.sumTotal);
-    if (sumTotalEl) sumTotalEl.value = Number.isFinite(storedSum) && storedSum > 0
-      ? storedSum
-      : (cetTotal + theoryTotal);
+    // Honour a stored custom total, including 0; only missing/invalid metadata
+    // falls back to the component-mark sum.
+    if (sumTotalEl) sumTotalEl.value = sumTotal;
   }
 
   async loadPreviousTests() {
@@ -2707,9 +2714,6 @@ class AppController {
     const copyAdminReportBtn = document.getElementById("copy-admin-report-btn");
     if (copyAdminReportBtn) copyAdminReportBtn.addEventListener("click", () => this.handleCopyAdminReport());
 
-    const openWhatsAppAdminBtn = document.getElementById("open-whatsapp-admin-btn");
-    if (openWhatsAppAdminBtn) openWhatsAppAdminBtn.addEventListener("click", () => this.handleOpenWhatsAppAdmin());
-
     const sendAdminApiBtn = document.getElementById("send-admin-api-btn");
     if (sendAdminApiBtn) sendAdminApiBtn.addEventListener("click", () => this.handleSendAdminAPI());
 
@@ -2728,22 +2732,22 @@ class AppController {
       });
     }
 
-    const subjectSelectEl = document.getElementById("attendance-subject-select");
-    if (subjectSelectEl) {
-      subjectSelectEl.addEventListener("change", () => {
-        const adminSub = document.getElementById("admin-subject-select");
-        if (adminSub) adminSub.value = subjectSelectEl.value;
+    const subjectInputEl = document.getElementById("attendance-subject-input");
+    if (subjectInputEl) {
+      subjectInputEl.addEventListener("input", () => {
+        const adminSub = document.getElementById("admin-subject-input");
+        if (adminSub) adminSub.value = subjectInputEl.value;
         if (document.getElementById("send-admin-modal").classList.contains("active")) {
           this.updateAdminReportTemplate();
         }
       });
     }
 
-    const adminSubjectSelectEl = document.getElementById("admin-subject-select");
-    if (adminSubjectSelectEl) {
-      adminSubjectSelectEl.addEventListener("change", () => {
-        const mainSub = document.getElementById("attendance-subject-select");
-        if (mainSub) mainSub.value = adminSubjectSelectEl.value;
+    const adminSubjectInputEl = document.getElementById("admin-subject-input");
+    if (adminSubjectInputEl) {
+      adminSubjectInputEl.addEventListener("input", () => {
+        const mainSub = document.getElementById("attendance-subject-input");
+        if (mainSub) mainSub.value = adminSubjectInputEl.value;
         if (document.getElementById("send-admin-modal").classList.contains("active")) {
           this.updateAdminReportTemplate();
         }
@@ -2882,6 +2886,8 @@ class AppController {
     });
     const examTypeSelect = document.getElementById('exam-type-select');
     if (examTypeSelect) examTypeSelect.addEventListener('change', () => this.updateExamPreview());
+    const examPortionInput = document.getElementById('exam-portion-input');
+    if (examPortionInput) examPortionInput.addEventListener('input', () => this.updateExamPreview());
     const examSelectAllBtn = document.getElementById('exam-select-all-btn');
     if (examSelectAllBtn) examSelectAllBtn.addEventListener('click', () => {
       this.examStudentSelection = this.examStudentSelection || new Set();
@@ -3587,6 +3593,7 @@ class AppController {
     if (!preview) return;
     const dates = this.getExamSubjectDates();
     const examType = document.getElementById('exam-type-select')?.value || 'Mid-Term';
+    const portion = document.getElementById('exam-portion-input')?.value.trim() || 'As per the PU Board syllabus';
     const allFilled = dates.physics && dates.chemistry && dates.maths && dates.biocs;
 
     if (!allFilled) {
@@ -3600,11 +3607,15 @@ This is to inform you about the upcoming ${examType} Examination.
 
 📚Examination Schedule
 
-1. Physics-${this.formatExamDate(dates.physics)}
-2. Chemistry-${this.formatExamDate(dates.chemistry)}
-3. Maths-${this.formatExamDate(dates.maths)}
-4. Bio/CS-${this.formatExamDate(dates.biocs)}
-📖 Portion: As per the PU Board syllabus.
+Physics-${this.formatExamDate(dates.physics)}
+
+Chemistry-${this.formatExamDate(dates.chemistry)}
+
+Maths-${this.formatExamDate(dates.maths)}
+
+Bio/CS-${this.formatExamDate(dates.biocs)}
+
+📖 Portion: ${portion}
 
 Kindly take note of the above schedule and ensure that your child is well prepared for the examinations.
 
@@ -4337,7 +4348,8 @@ Kindly take note of the above schedule and ensure that your child is well prepar
         testTitle = tId;
         subjectName = tSub;
         const meta = await db.getTestMetadata(tId, tSub);
-        maxMarksInfo = `Max: TH ${meta.theoryTotal || 25} | CET ${meta.cetTotal || 25} | Total ${meta.sumTotal || 50}`;
+        const { cetTotal, theoryTotal, sumTotal } = this.getTestMaxMarks(meta);
+        maxMarksInfo = `Max: TH ${theoryTotal} | CET ${cetTotal} | Total ${sumTotal}`;
 
         try {
           const rawResults = await db.getTestMarks(tId, tSub);

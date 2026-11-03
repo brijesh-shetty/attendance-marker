@@ -646,6 +646,28 @@ app.post('/api/admin/batches/select', requireSameOrigin, requireAdmin, async (re
   try {
     const batchId = text(req.body.batchId, 'Batch ID', { required: true, max: 100 });
     issueSession(res, { role: 'admin', activeBatchId: batchId });
+    
+    // Fetch the actual batch data from Firestore
+    try {
+      const db = getFirestore();
+      const batchSnap = await db.collection('batches').doc(batchId).get();
+      if (batchSnap.exists) {
+        const batchData = batchSnap.data();
+        return res.json({ 
+          batch: { 
+            id: batchId, 
+            batchNumber: batchData.batchNumber || 1, 
+            academicYear: batchData.academicYear || 2026, 
+            grade: batchData.grade || 12, 
+            active: batchData.active !== false 
+          } 
+        });
+      }
+    } catch (dbErr) {
+      console.warn('Batch fetch from Firestore failed, using default:', dbErr.message);
+    }
+    
+    // Fallback to default values if batch not found
     return res.json({ batch: { id: batchId, batchNumber: 1, academicYear: 2026, grade: 12, active: true } });
   } catch (error) {
     return clientError(res, error);
