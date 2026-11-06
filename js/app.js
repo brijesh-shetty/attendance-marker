@@ -424,12 +424,13 @@ class AppController {
     const templateName = (document.getElementById('fee-reminder-template-input').value || '').trim();
     if (!templateName) return this.showToast('Enter a template name first.', 'danger');
 
-    // eve_reminder has its own Meta template body variables:
-    // {{1}} student name, {{2}} deadline date, {{3}} balance due.
+    // Deadline templates require a date supplied by the admin. Their Meta
+    // template variables differ from the standard four fee-value variables.
     let deadline = null;
-    if (templateName === 'eve_reminder') {
+    const requiresDeadline = ['eve_reminder', 'deadline_missed_warning'].includes(templateName);
+    if (requiresDeadline) {
       const rawDate = (document.getElementById('fee-reminder-deadline-input')?.value || '').trim();
-      if (!rawDate) return this.showToast('Enter a deadline date for the eve_reminder template.', 'danger');
+      if (!rawDate) return this.showToast(`Enter a deadline date for the ${templateName} template.`, 'danger');
       const [year, month, day] = rawDate.split('-');
       deadline = `${day}/${month}/${year}`;
     }
@@ -2864,12 +2865,12 @@ class AppController {
     const refreshLogBtn = document.getElementById("fee-reminder-log-refresh-btn");
     if (refreshLogBtn) refreshLogBtn.addEventListener("click", () => this.loadFeeReminderLog());
 
-    // Ask for the one date required by the eve_reminder Meta template.
+    // Ask for a date only when the selected Meta template requires one.
     const templateSelect = document.getElementById("fee-reminder-template-input");
     const deadlineGroup = document.getElementById("fee-reminder-deadline-group");
     if (templateSelect && deadlineGroup) {
       const toggleDeadline = () => {
-        deadlineGroup.style.display = templateSelect.value === 'eve_reminder' ? '' : 'none';
+        deadlineGroup.style.display = ['eve_reminder', 'deadline_missed_warning'].includes(templateSelect.value) ? '' : 'none';
       };
       templateSelect.addEventListener('change', toggleDeadline);
       toggleDeadline();

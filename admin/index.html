@@ -472,6 +472,7 @@
                 <option value="fee_reminder_zero">fee_reminder_zero (0% Paid)</option>
                 <option value="eve_reminder">eve_reminder (1 Day Before Deadline)</option>
                 <option value="deadline_missed">deadline_missed (Deadline Missed)</option>
+                <option value="deadline_missed_warning">deadline_missed_warning (Past Deadline Warning)</option>
                 <option value="final_warning">final_warning (Final Warning - 3 Days Late)</option>
                 <option value="balance_reminder">balance_reminder (General Reminder)</option>
                 <option value="payment_thanks">payment_thanks (Thank You Receipt)</option>
@@ -482,7 +483,7 @@
             </button>
           </div>
           <div id="fee-reminder-deadline-group" class="input-group" style="margin:10px 0 0; display:none;">
-            <label for="fee-reminder-deadline-input" style="font-size:.8rem;">Deadline date (for eve_reminder template)</label>
+            <label for="fee-reminder-deadline-input" style="font-size:.8rem;">Payment deadline date (required for the selected deadline template)</label>
             <input type="date" id="fee-reminder-deadline-input" class="input-field" style="font-size:.85rem;">
           </div>
         </div>

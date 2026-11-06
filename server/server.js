@@ -1442,15 +1442,16 @@ app.delete('/api/admin/fee-followups/:studentId', requireSameOrigin, requireAdmi
 // ── Fee reminders (bulk WhatsApp send + daily log) ──────────
 // POST body: { studentIds: string[], templateName: string, templateLanguage?: string, note?: string }
 // Most fee templates receive 4 body variables: student name, total fee,
-// received amount, and balance. eve_reminder instead receives: student name,
-// manually entered deadline, and balance.
+// received amount, and balance. Deadline templates instead receive the values
+// required by their approved Meta template bodies.
 app.post('/api/admin/fee-reminders', requireSameOrigin, requireAdmin, async (req, res) => {
   try {
     const templateName = text(req.body.templateName, 'Template name', { required: true, max: 100 });
     const templateLanguage = text(req.body.templateLanguage, 'Template language', { max: 10 }) || 'en';
     const deadline = text(req.body.deadline || '', 'Deadline date', { max: 20 });
-    if (templateName === 'eve_reminder' && !deadline) {
-      throw new Error('A deadline date is required for the eve_reminder template.');
+    const requiresDeadline = ['eve_reminder', 'deadline_missed_warning'].includes(templateName);
+    if (requiresDeadline && !deadline) {
+      throw new Error(`A deadline date is required for the ${templateName} template.`);
     }
     const rawIds = Array.isArray(req.body.studentIds) ? req.body.studentIds : [];
     if (!rawIds.length) throw new Error('Select at least one student to remind.');
@@ -1492,7 +1493,10 @@ app.post('/api/admin/fee-reminders', requireSameOrigin, requireAdmin, async (req
       const balance = Math.max(totalFee - received, 0);
       const params = templateName === 'eve_reminder'
         ? [student.name, deadline, String(balance)]
-        : [student.name, String(totalFee), String(received), String(balance)];
+        : templateName === 'deadline_missed_warning'
+          // {{1}} student name, {{2}} outstanding balance, {{3}} deadline date
+          ? [student.name, String(balance), deadline]
+          : [student.name, String(totalFee), String(received), String(balance)];
       const result = await notificationService.sendTemplate({
         to: phone,
         templateName,
